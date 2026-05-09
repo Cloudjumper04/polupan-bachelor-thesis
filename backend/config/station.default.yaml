@@ -1,4 +1,5 @@
 station:
+  id: "smart_energy_lab"
   name: "SmartEnergy Lab"
   description: >
     Симуляція сонячної станції в лабораторії SmartEnergy в межах
