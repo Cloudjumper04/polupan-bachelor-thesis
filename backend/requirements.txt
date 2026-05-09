@@ -5,3 +5,6 @@ pydantic-settings
 PyYAML
 sqlmodel
 pytest
+pvlib
+pandas
+numpy
