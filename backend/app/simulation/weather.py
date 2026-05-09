@@ -16,7 +16,9 @@ from app.storage.weather_repository import WeatherObservation
 
 
 OPEN_METEO_ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
+OPEN_METEO_FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 OPEN_METEO_SOURCE = "open-meteo-archive"
+OPEN_METEO_FORECAST_SOURCE = "open_meteo_forecast"
 
 HOURLY_VARIABLES = [
     "cloud_cover",
@@ -58,6 +60,22 @@ class WeatherObservationData:
     direct_radiation_w_m2: float | None
     diffuse_radiation_w_m2: float | None
     source: str = OPEN_METEO_SOURCE
+
+
+@dataclass(frozen=True)
+class WeatherForecastData:
+    forecast_timestamp_utc: datetime
+    forecast_timestamp_local: datetime
+    weather_code: int | None
+    cloud_cover_percent: float | None
+    precipitation_mm: float | None
+    rain_mm: float | None
+    snowfall_cm: float | None
+    shortwave_radiation_w_m2: float | None
+    direct_radiation_w_m2: float | None
+    diffuse_radiation_w_m2: float | None
+    source: str = OPEN_METEO_FORECAST_SOURCE
+    resolution_minutes: int = 60
 
 
 def map_weather_code_to_state(weather_code: int | None) -> str:
@@ -143,6 +161,48 @@ def fetch_open_meteo_historical_weather(
         raise RuntimeError(f"Open-Meteo historical weather error: {reason}")
 
     return _parse_open_meteo_hourly_response(payload, timezone)
+
+
+def fetch_open_meteo_forecast(
+    latitude: float,
+    longitude: float,
+    timezone: str,
+    forecast_hours: int | None = 48,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> list[WeatherForecastData]:
+    if (start_date is None) != (end_date is None):
+        raise ValueError("start_date and end_date must be provided together")
+    if start_date is not None and end_date is not None and end_date < start_date:
+        raise ValueError("end_date must be on or after start_date")
+    if start_date is None and (forecast_hours is None or forecast_hours <= 0):
+        raise ValueError("forecast_hours must be greater than 0")
+
+    params = {
+        "latitude": latitude,
+        "longitude": longitude,
+        "hourly": ",".join(HOURLY_VARIABLES),
+        "timezone": timezone,
+    }
+    if start_date is not None and end_date is not None:
+        params["start_date"] = start_date.isoformat()
+        params["end_date"] = end_date.isoformat()
+    else:
+        params["forecast_hours"] = forecast_hours
+    try:
+        response = requests.get(OPEN_METEO_FORECAST_URL, params=params, timeout=30)
+        response.raise_for_status()
+        payload = response.json()
+    except requests.RequestException as exc:
+        raise RuntimeError(f"Failed to fetch Open-Meteo forecast weather: {exc}") from exc
+    except ValueError as exc:
+        raise RuntimeError("Open-Meteo returned invalid JSON") from exc
+
+    if payload.get("error"):
+        reason = payload.get("reason", "unknown API error")
+        raise RuntimeError(f"Open-Meteo forecast weather error: {reason}")
+
+    return _parse_open_meteo_forecast_response(payload, timezone)
 
 
 def generate_weather_adjusted_solar(
@@ -265,6 +325,66 @@ def _parse_open_meteo_hourly_response(
         )
 
     return observations
+
+
+def _parse_open_meteo_forecast_response(
+    payload: dict[str, Any],
+    timezone_name: str,
+) -> list[WeatherForecastData]:
+    hourly = payload.get("hourly")
+    if not isinstance(hourly, dict):
+        raise RuntimeError("Open-Meteo response is missing hourly data")
+
+    times = hourly.get("time")
+    if not isinstance(times, list):
+        raise RuntimeError("Open-Meteo response is missing hourly time data")
+
+    values_by_variable: dict[str, list[Any]] = {}
+    for variable in HOURLY_VARIABLES:
+        values = hourly.get(variable)
+        if not isinstance(values, list):
+            raise RuntimeError(f"Open-Meteo response is missing hourly {variable} data")
+        if len(values) != len(times):
+            raise RuntimeError(
+                f"Open-Meteo hourly {variable} length does not match time length"
+            )
+        values_by_variable[variable] = values
+
+    station_timezone = ZoneInfo(timezone_name)
+    forecasts: list[WeatherForecastData] = []
+    for index, timestamp_value in enumerate(times):
+        forecast_timestamp_local = _parse_open_meteo_timestamp(
+            timestamp_value,
+            station_timezone,
+        )
+        forecasts.append(
+            WeatherForecastData(
+                forecast_timestamp_utc=forecast_timestamp_local.astimezone(
+                    timezone.utc
+                ),
+                forecast_timestamp_local=forecast_timestamp_local,
+                weather_code=_optional_int(values_by_variable["weather_code"][index]),
+                cloud_cover_percent=_optional_float(
+                    values_by_variable["cloud_cover"][index]
+                ),
+                precipitation_mm=_optional_float(
+                    values_by_variable["precipitation"][index]
+                ),
+                rain_mm=_optional_float(values_by_variable["rain"][index]),
+                snowfall_cm=_optional_float(values_by_variable["snowfall"][index]),
+                shortwave_radiation_w_m2=_optional_float(
+                    values_by_variable["shortwave_radiation"][index]
+                ),
+                direct_radiation_w_m2=_optional_float(
+                    values_by_variable["direct_radiation"][index]
+                ),
+                diffuse_radiation_w_m2=_optional_float(
+                    values_by_variable["diffuse_radiation"][index]
+                ),
+            )
+        )
+
+    return forecasts
 
 
 def _parse_open_meteo_timestamp(

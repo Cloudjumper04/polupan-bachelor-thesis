@@ -7,7 +7,9 @@ import pytest
 
 from app.simulation import weather
 from app.simulation.weather import (
+    OPEN_METEO_FORECAST_SOURCE,
     calculate_weather_factor,
+    fetch_open_meteo_forecast,
     fetch_open_meteo_historical_weather,
     generate_weather_adjusted_solar,
     map_weather_code_to_state,
@@ -151,6 +153,99 @@ def test_fetch_open_meteo_historical_weather_parses_mocked_response(
     assert observations[1].cloud_cover_percent == 80.0
     assert observations[1].rain_mm == 1.0
     assert observations[1].source == weather.OPEN_METEO_SOURCE
+
+
+def test_fetch_open_meteo_forecast_parses_mocked_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = {
+        "hourly": {
+            "time": ["2026-01-01T00:00", "2026-01-01T01:00", "2026-01-01T02:00"],
+            "cloud_cover": [10, 50, 80],
+            "precipitation": [0.0, 0.1, 1.2],
+            "rain": [0.0, 0.0, 1.0],
+            "snowfall": [0.0, 0.0, 0.0],
+            "weather_code": [0, 3, 61],
+            "shortwave_radiation": [0.0, 20.0, 40.0],
+            "direct_radiation": [0.0, 5.0, 10.0],
+            "diffuse_radiation": [0.0, 15.0, 30.0],
+        }
+    }
+    captured_params: dict[str, object] = {}
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return payload
+
+    def fake_get(url: str, params: dict[str, object], timeout: int) -> FakeResponse:
+        captured_params.update(params)
+        assert url == weather.OPEN_METEO_FORECAST_URL
+        assert timeout == 30
+        return FakeResponse()
+
+    monkeypatch.setattr(weather.requests, "get", fake_get)
+
+    forecasts = fetch_open_meteo_forecast(
+        latitude=50.0,
+        longitude=30.0,
+        timezone="Europe/Kyiv",
+        start_date=date(2026, 1, 1),
+        end_date=date(2026, 1, 3),
+    )
+
+    assert captured_params["start_date"] == "2026-01-01"
+    assert captured_params["end_date"] == "2026-01-03"
+    assert "forecast_hours" not in captured_params
+    assert captured_params["timezone"] == "Europe/Kyiv"
+    assert len(forecasts) == 3
+    assert forecasts[0].forecast_timestamp_local.isoformat() == (
+        "2026-01-01T00:00:00+02:00"
+    )
+    assert forecasts[0].forecast_timestamp_utc.isoformat() == (
+        "2025-12-31T22:00:00+00:00"
+    )
+    assert forecasts[2].weather_code == 61
+    assert forecasts[2].cloud_cover_percent == 80.0
+    assert forecasts[2].source == OPEN_METEO_FORECAST_SOURCE
+    assert forecasts[2].resolution_minutes == 60
+
+
+def test_fetch_open_meteo_forecast_raises_clear_error_on_http_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            raise weather.requests.HTTPError("503 Server Error")
+
+    def fake_get(url: str, params: dict[str, object], timeout: int) -> FakeResponse:
+        return FakeResponse()
+
+    monkeypatch.setattr(weather.requests, "get", fake_get)
+
+    with pytest.raises(RuntimeError, match="Failed to fetch Open-Meteo forecast"):
+        fetch_open_meteo_forecast(50.0, 30.0, "Europe/Kyiv")
+
+
+def test_fetch_open_meteo_forecast_raises_clear_error_on_api_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return {"error": True, "reason": "forecast unavailable"}
+
+    def fake_get(url: str, params: dict[str, object], timeout: int) -> FakeResponse:
+        return FakeResponse()
+
+    monkeypatch.setattr(weather.requests, "get", fake_get)
+
+    with pytest.raises(RuntimeError, match="forecast unavailable"):
+        fetch_open_meteo_forecast(50.0, 30.0, "Europe/Kyiv")
 
 
 def test_generate_weather_adjusted_solar_produces_one_point_per_ideal_point() -> None:
