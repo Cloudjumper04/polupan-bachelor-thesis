@@ -9,3 +9,4 @@ pvlib
 pandas
 numpy
 requests
+matplotlib
