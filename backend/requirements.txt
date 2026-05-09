@@ -8,3 +8,4 @@ pytest
 pvlib
 pandas
 numpy
+requests
