@@ -6,21 +6,22 @@ station:
     реалізації дипломної роботи на тему "Програмний модуль автоматизації режимів зарядки
     акумуляторних батарей лабораторного стенду з сонячною генерацією енергії."
 
-solar:
-  panel_types:
-    - id: "axioma_200w"
-      name: "AXIOMA Energy 200W"
-      nominal_voltage_v: 35.0
-      max_power_w: 200.0
+  solar:
+    panel_types:
+      - id: "axioma_200w"
+        name: "AXIOMA Energy 200W"
+        nominal_voltage_v: 35.0
+        max_power_w: 200.0
 
-  array:
-    series_connections:
-      - id: "series_1"
-        panel_type_id: "axioma_200w"
-        panels_in_series: 2
+    array:
+      series_connections:
+        - id: "series_1"
+          panel_type_id: "axioma_200w"
+          panels_in_series: 2
 
-  installation:
-    latitude: 50.448997
-    longitude: 30.464642
-    azimuth_deg: 180.0
-    tilt_deg: 35.0
+    installation:
+      latitude: 50.448997
+      longitude: 30.464642
+      timezone: "Europe/Kyiv"
+      azimuth_deg: 180.0
+      tilt_deg: 35.0
