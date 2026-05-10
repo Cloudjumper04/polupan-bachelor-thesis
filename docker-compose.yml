@@ -1,0 +1,19 @@
+services:
+  weather-scheduler:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: smartenergy-weather-scheduler
+    volumes:
+      - ./backend/data:/app/backend/data
+      - ./backend/config:/app/backend/config:ro
+    command:
+      - python
+      - backend/scripts/weather_cache_scheduler.py
+      - --history-start
+      - "2025-10-06"
+      - --days-ahead
+      - "2"
+      - --interval-hours
+      - "12"
+    restart: unless-stopped
