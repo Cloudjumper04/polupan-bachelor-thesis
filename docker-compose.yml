@@ -9,7 +9,7 @@ services:
       - ./backend/config:/app/backend/config:ro
     command:
       - python
-      - backend/scripts/weather_cache_scheduler.py
+      - backend/scripts/solar_data_scheduler.py
       - --history-start
       - "2025-10-06"
       - --days-ahead

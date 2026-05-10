@@ -30,9 +30,9 @@ The system will simulate a solar-powered laboratory stand and provide charging a
 6. Web dashboard
 7. Docker setup
 
-## Docker weather maintenance
+## Docker solar data maintenance
 
-The weather cache scheduler persists SQLite data through the host directory
+The solar data scheduler persists SQLite data through the host directory
 `./backend/data`, mounted into the container at `/app/backend/data`.
 
 Build the scheduler image:
@@ -41,10 +41,10 @@ Build the scheduler image:
 docker compose build weather-scheduler
 ```
 
-Run one maintenance update:
+Run the full scheduler in the foreground:
 
 ```bash
-docker compose run --rm weather-scheduler python backend/scripts/update_weather_cache.py --history-start 2025-10-06 --days-ahead 2
+docker compose run --rm weather-scheduler python backend/scripts/solar_data_scheduler.py --history-start 2025-10-06 --days-ahead 2 --interval-hours 12
 ```
 
 Start the scheduler:

@@ -65,6 +65,8 @@ def list_ideal_solar_for_config(
     station_id: str,
     config_hash: str,
     limit: int | None = None,
+    start_utc: datetime | None = None,
+    end_utc: datetime | None = None,
 ) -> list[IdealSolarProduction]:
     statement = (
         select(IdealSolarProduction)
@@ -72,6 +74,10 @@ def list_ideal_solar_for_config(
         .where(IdealSolarProduction.config_hash == config_hash)
         .order_by(IdealSolarProduction.timestamp_utc)
     )
+    if start_utc is not None:
+        statement = statement.where(IdealSolarProduction.timestamp_utc >= start_utc)
+    if end_utc is not None:
+        statement = statement.where(IdealSolarProduction.timestamp_utc < end_utc)
     if limit is not None:
         statement = statement.limit(limit)
     return list(session.exec(statement).all())

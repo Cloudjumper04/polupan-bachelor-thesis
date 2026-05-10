@@ -28,8 +28,6 @@ from app.storage.weather_repository import (
 
 DEFAULT_CONFIG_PATH = BACKEND_DIR / "config" / "station.default.yaml"
 DEFAULT_START_DATE = date(2025, 10, 6)
-DEFAULT_END_DATE = date(2026, 5, 8)
-MAX_HISTORICAL_END_DATE = date(2026, 5, 8)
 SOLAR_TIMESTEP_MINUTES = 15
 
 
@@ -37,9 +35,12 @@ def main() -> None:
     args = _parse_args()
     config = load_config(args.config)
     station_timezone = ZoneInfo(config.station.solar.installation.timezone)
+    end_date = args.end or _default_historical_end_date(station_timezone)
+    if end_date < args.start:
+        raise RuntimeError("--end must be on or after --start")
     start_utc, end_utc = _date_range_to_utc_bounds(
         args.start,
-        args.end,
+        end_date,
         station_timezone,
     )
     station_id = config.station.id
@@ -81,7 +82,7 @@ def main() -> None:
     print(f"station id: {station_id}")
     print(f"config hash: {config_hash}")
     print(f"start date: {args.start.isoformat()}")
-    print(f"end date: {args.end.isoformat()}")
+    print(f"end date: {end_date.isoformat()}")
     print(f"ideal rows used: {len(ideal_points)}")
     print(f"weather rows used: {len(weather_observations)}")
     print(f"simulated rows generated: {len(simulated_points)}")
@@ -102,21 +103,20 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH)
     parser.add_argument("--database-url", default=None)
     parser.add_argument("--start", type=_parse_date, default=DEFAULT_START_DATE)
-    parser.add_argument("--end", type=_parse_date, default=DEFAULT_END_DATE)
+    parser.add_argument("--end", type=_parse_date, default=None)
     args = parser.parse_args()
 
-    if args.end < args.start:
+    if args.end is not None and args.end < args.start:
         parser.error("--end must be on or after --start")
-    if args.end > MAX_HISTORICAL_END_DATE:
-        parser.error(
-            "--end must not be later than "
-            f"{MAX_HISTORICAL_END_DATE.isoformat()} for historical weather"
-        )
     return args
 
 
 def _parse_date(value: str) -> date:
     return date.fromisoformat(value)
+
+
+def _default_historical_end_date(station_timezone: ZoneInfo) -> date:
+    return datetime.now(station_timezone).date() - timedelta(days=1)
 
 
 def _date_range_to_utc_bounds(
