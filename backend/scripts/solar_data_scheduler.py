@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from bisect import bisect_left
 import sys
 import time
 import traceback
@@ -24,6 +25,11 @@ import update_weather_cache
 from app.config_loader import calculate_config_hash, load_config
 from app.schemas import AppConfig
 from app.simulation.solar import IdealSolarGenerator, IdealSolarPoint
+from app.simulation.solar_interpolation import (
+    apply_interpolation_variation,
+    calculate_deterministic_variation_factor,
+    interpolate_power,
+)
 from app.simulation.weather import (
     calculate_weather_factor,
     generate_weather_adjusted_solar,
@@ -36,6 +42,11 @@ from app.storage.forecast_solar_repository import (
     delete_forecast_solar_for_config,
     list_forecast_solar_for_config,
     save_forecast_solar_points,
+)
+from app.storage.interpolated_solar_repository import (
+    InterpolatedSolarProduction,
+    delete_interpolated_solar_for_config,
+    save_interpolated_solar_points,
 )
 from app.storage.simulated_solar_repository import (
     delete_simulated_solar_for_config,
@@ -55,10 +66,13 @@ DEFAULT_CONFIG_PATH = Path("backend/config/station.default.yaml")
 DEFAULT_DATABASE_URL = "sqlite:///backend/data/smartenergy.db"
 DEFAULT_HISTORY_START = date(2025, 10, 6)
 DEFAULT_DAYS_AHEAD = 2
-DEFAULT_INTERVAL_HOURS = 12.0
+DEFAULT_MAINTENANCE_INTERVAL_HOURS = 12.0
+DEFAULT_FAST_CACHE_INTERVAL_SECONDS = 60.0
+DEFAULT_FULL_CACHE_INTERVAL_MINUTES = 45.0
 SOLAR_TIMESTEP_MINUTES = 15
 WEATHER_TIMESTEP_MINUTES = 60
 SECONDS_PER_HOUR = 60 * 60
+SOURCE_TIMESTEP_MINUTES = 15
 MIN_UTC = datetime(1970, 1, 1, tzinfo=timezone.utc)
 MAX_UTC = datetime(9999, 12, 31, 23, 59, 59, tzinfo=timezone.utc)
 
@@ -69,7 +83,9 @@ class SchedulerSettings:
     database_url: str
     history_start: date
     days_ahead: int
-    interval_hours: float
+    maintenance_interval_hours: float
+    fast_cache_interval_seconds: float
+    full_cache_interval_minutes: float
 
 
 @dataclass(frozen=True)
@@ -100,11 +116,38 @@ class SolarDataMaintenanceSummary:
     forecast_adjusted_solar: AdjustedSolarMaintenanceSummary
 
 
+@dataclass(frozen=True)
+class InterpolationWindow:
+    start_utc: datetime
+    end_utc: datetime
+    resolution_seconds: int
+
+
+@dataclass(frozen=True)
+class SourceSolarPoint:
+    timestamp_utc: datetime
+    timestamp_local: datetime
+    power_w: float
+    weather_state: str | None
+    source_type: str
+
+
+@dataclass(frozen=True)
+class InterpolatedCacheSummary:
+    rows: int
+    windows: int
+    start_utc: datetime | None
+    end_utc: datetime | None
+    fast_only: bool
+
+
 MaintenanceRunner = Callable[
     [Path, str | None, date, int],
     SolarDataMaintenanceSummary,
 ]
+CacheRunner = Callable[[Path, str | None], InterpolatedCacheSummary]
 SleepFunction = Callable[[float], None]
+ClockFunction = Callable[[], float]
 CadenceMode = Literal["utc", "local_wall_time"]
 
 
@@ -126,38 +169,94 @@ def parse_args(argv: Sequence[str] | None = None) -> SchedulerSettings:
     )
     parser.add_argument("--days-ahead", type=int, default=DEFAULT_DAYS_AHEAD)
     parser.add_argument(
+        "--maintenance-interval-hours",
         "--interval-hours",
+        dest="maintenance_interval_hours",
         type=float,
-        default=DEFAULT_INTERVAL_HOURS,
+        default=DEFAULT_MAINTENANCE_INTERVAL_HOURS,
+    )
+    parser.add_argument(
+        "--fast-cache-interval-seconds",
+        type=float,
+        default=DEFAULT_FAST_CACHE_INTERVAL_SECONDS,
+    )
+    parser.add_argument(
+        "--full-cache-interval-minutes",
+        type=float,
+        default=DEFAULT_FULL_CACHE_INTERVAL_MINUTES,
     )
     args = parser.parse_args(argv)
 
     if args.days_ahead < 0:
         parser.error("--days-ahead must be 0 or greater")
-    if args.interval_hours <= 0:
-        parser.error("--interval-hours must be greater than 0")
+    if args.maintenance_interval_hours <= 0:
+        parser.error("--maintenance-interval-hours must be greater than 0")
+    if args.fast_cache_interval_seconds <= 0:
+        parser.error("--fast-cache-interval-seconds must be greater than 0")
+    if args.full_cache_interval_minutes <= 0:
+        parser.error("--full-cache-interval-minutes must be greater than 0")
 
     return SchedulerSettings(
         config=args.config,
         database_url=args.database_url,
         history_start=args.history_start,
         days_ahead=args.days_ahead,
-        interval_hours=args.interval_hours,
+        maintenance_interval_hours=args.maintenance_interval_hours,
+        fast_cache_interval_seconds=args.fast_cache_interval_seconds,
+        full_cache_interval_minutes=args.full_cache_interval_minutes,
     )
 
 
 def run_forever(
     settings: SchedulerSettings,
     maintenance_runner: MaintenanceRunner | None = None,
+    full_cache_runner: CacheRunner | None = None,
+    fast_cache_runner: CacheRunner | None = None,
     sleep: SleepFunction = time.sleep,
+    monotonic: ClockFunction = time.monotonic,
 ) -> None:
     if maintenance_runner is None:
         maintenance_runner = run_solar_data_maintenance
-    interval_seconds = settings.interval_hours * SECONDS_PER_HOUR
+    if full_cache_runner is None:
+        full_cache_runner = run_full_interpolated_solar_cache_refresh
+    if fast_cache_runner is None:
+        fast_cache_runner = run_fast_interpolated_solar_cache_refresh
+
+    maintenance_interval_seconds = (
+        settings.maintenance_interval_hours * SECONDS_PER_HOUR
+    )
+    full_cache_interval_seconds = settings.full_cache_interval_minutes * 60.0
+    fast_cache_interval_seconds = settings.fast_cache_interval_seconds
+
+    if run_once(settings, maintenance_runner):
+        _run_cache_once("full interpolation cache refresh", settings, full_cache_runner)
+    last_maintenance = monotonic()
+    last_full_cache = last_maintenance
+    last_fast_cache = last_maintenance
+
     while True:
-        run_once(settings, maintenance_runner)
-        _log(f"solar data scheduler sleeping for {settings.interval_hours:g} hours")
-        sleep(interval_seconds)
+        now_monotonic = monotonic()
+        if now_monotonic - last_maintenance >= maintenance_interval_seconds:
+            if run_once(settings, maintenance_runner):
+                _run_cache_once(
+                    "full interpolation cache refresh",
+                    settings,
+                    full_cache_runner,
+                )
+                last_full_cache = now_monotonic
+                last_fast_cache = now_monotonic
+            last_maintenance = now_monotonic
+        elif now_monotonic - last_full_cache >= full_cache_interval_seconds:
+            _run_cache_once("full interpolation cache refresh", settings, full_cache_runner)
+            last_full_cache = now_monotonic
+            last_fast_cache = now_monotonic
+        elif now_monotonic - last_fast_cache >= fast_cache_interval_seconds:
+            _run_cache_once("fast interpolation cache refresh", settings, fast_cache_runner)
+            last_fast_cache = now_monotonic
+
+        sleep_seconds = min(5.0, fast_cache_interval_seconds)
+        _log(f"solar data scheduler sleeping for {sleep_seconds:g} seconds")
+        sleep(sleep_seconds)
 
 
 def run_once(
@@ -200,6 +299,390 @@ def run_once(
         f"forecast_solar_regenerated={summary.forecast_adjusted_solar.regenerated}"
     )
     return True
+
+
+def _run_cache_once(
+    label: str,
+    settings: SchedulerSettings,
+    cache_runner: CacheRunner,
+) -> bool:
+    _log(
+        f"{label} started "
+        f"config={settings.config} database_url={settings.database_url}"
+    )
+    try:
+        summary = cache_runner(settings.config, settings.database_url)
+    except Exception as exc:
+        _log_error(f"{label} failed: {exc}")
+        traceback.print_exc(file=sys.stderr)
+        sys.stderr.flush()
+        return False
+
+    _log(
+        f"{label} completed "
+        f"rows={summary.rows} windows={summary.windows} "
+        f"start_utc={_format_optional_datetime(summary.start_utc)} "
+        f"end_utc={_format_optional_datetime(summary.end_utc)} "
+        f"fast_only={summary.fast_only}"
+    )
+    return True
+
+
+def run_full_interpolated_solar_cache_refresh(
+    config_path: Path,
+    database_url: str | None,
+    now: datetime | None = None,
+) -> InterpolatedCacheSummary:
+    config = load_config(config_path)
+    station_id = config.station.id
+    config_hash = calculate_config_hash(config)
+    station_timezone = ZoneInfo(config.station.solar.installation.timezone)
+    generated_at_utc = _resolve_now_utc(now)
+    windows = build_default_interpolation_windows(generated_at_utc)
+
+    engine = get_engine(database_url)
+    create_db_and_tables(engine)
+    with Session(engine) as session:
+        delete_interpolated_solar_for_config(session, station_id, config_hash)
+        points = generate_interpolated_solar_cache_points(
+            session=session,
+            station_id=station_id,
+            config_hash=config_hash,
+            station_timezone=station_timezone,
+            windows=windows,
+            generated_at_utc=generated_at_utc,
+        )
+        save_interpolated_solar_points(session, points)
+
+    return InterpolatedCacheSummary(
+        rows=len(points),
+        windows=len(windows),
+        start_utc=windows[0].start_utc if windows else None,
+        end_utc=windows[-1].end_utc if windows else None,
+        fast_only=False,
+    )
+
+
+def run_fast_interpolated_solar_cache_refresh(
+    config_path: Path,
+    database_url: str | None,
+    now: datetime | None = None,
+) -> InterpolatedCacheSummary:
+    config = load_config(config_path)
+    station_id = config.station.id
+    config_hash = calculate_config_hash(config)
+    station_timezone = ZoneInfo(config.station.solar.installation.timezone)
+    generated_at_utc = _resolve_now_utc(now)
+    windows = build_fast_interpolation_windows(generated_at_utc)
+
+    engine = get_engine(database_url)
+    create_db_and_tables(engine)
+    with Session(engine) as session:
+        for window in windows:
+            delete_interpolated_solar_for_config(
+                session,
+                station_id,
+                config_hash,
+                start_utc=window.start_utc,
+                end_utc=window.end_utc,
+                resolution_seconds=window.resolution_seconds,
+            )
+        points = generate_interpolated_solar_cache_points(
+            session=session,
+            station_id=station_id,
+            config_hash=config_hash,
+            station_timezone=station_timezone,
+            windows=windows,
+            generated_at_utc=generated_at_utc,
+        )
+        save_interpolated_solar_points(session, points)
+
+    return InterpolatedCacheSummary(
+        rows=len(points),
+        windows=len(windows),
+        start_utc=windows[0].start_utc if windows else None,
+        end_utc=windows[-1].end_utc if windows else None,
+        fast_only=True,
+    )
+
+
+def build_default_interpolation_windows(now: datetime) -> list[InterpolationWindow]:
+    now_utc = _resolve_now_utc(now)
+    return [
+        InterpolationWindow(
+            start_utc=now_utc - timedelta(days=7),
+            end_utc=now_utc - timedelta(hours=24),
+            resolution_seconds=300,
+        ),
+        InterpolationWindow(
+            start_utc=now_utc - timedelta(hours=24),
+            end_utc=now_utc - timedelta(hours=12),
+            resolution_seconds=60,
+        ),
+        InterpolationWindow(
+            start_utc=now_utc - timedelta(hours=12),
+            end_utc=now_utc - timedelta(hours=3),
+            resolution_seconds=30,
+        ),
+        InterpolationWindow(
+            start_utc=now_utc - timedelta(hours=3),
+            end_utc=now_utc - timedelta(minutes=30),
+            resolution_seconds=5,
+        ),
+        InterpolationWindow(
+            start_utc=now_utc - timedelta(minutes=30),
+            end_utc=now_utc + timedelta(minutes=30),
+            resolution_seconds=1,
+        ),
+        InterpolationWindow(
+            start_utc=now_utc + timedelta(minutes=30),
+            end_utc=now_utc + timedelta(hours=3),
+            resolution_seconds=5,
+        ),
+    ]
+
+
+def build_fast_interpolation_windows(now: datetime) -> list[InterpolationWindow]:
+    now_utc = _resolve_now_utc(now)
+    return [
+        InterpolationWindow(
+            start_utc=now_utc - timedelta(minutes=30),
+            end_utc=now_utc + timedelta(minutes=30),
+            resolution_seconds=1,
+        )
+    ]
+
+
+def generate_interpolated_solar_cache_points(
+    session: Session,
+    station_id: str,
+    config_hash: str,
+    station_timezone: ZoneInfo,
+    windows: Sequence[InterpolationWindow],
+    generated_at_utc: datetime,
+) -> list[InterpolatedSolarProduction]:
+    generated_at = _resolve_now_utc(generated_at_utc)
+    current_local_date = generated_at.astimezone(station_timezone).date()
+    transition_utc = datetime.combine(
+        current_local_date,
+        datetime_time.min,
+        tzinfo=station_timezone,
+    ).astimezone(timezone.utc)
+
+    points: list[InterpolatedSolarProduction] = []
+    for window in windows:
+        points.extend(
+            _generate_interpolated_solar_window(
+                session=session,
+                station_id=station_id,
+                config_hash=config_hash,
+                station_timezone=station_timezone,
+                window=window,
+                generated_at_utc=generated_at,
+                transition_utc=transition_utc,
+            )
+        )
+    return points
+
+
+def _generate_interpolated_solar_window(
+    session: Session,
+    station_id: str,
+    config_hash: str,
+    station_timezone: ZoneInfo,
+    window: InterpolationWindow,
+    generated_at_utc: datetime,
+    transition_utc: datetime,
+) -> list[InterpolatedSolarProduction]:
+    if window.resolution_seconds <= 0:
+        raise ValueError("resolution_seconds must be greater than 0")
+    start_utc = _as_utc(window.start_utc)
+    end_utc = _as_utc(window.end_utc)
+    if end_utc <= start_utc:
+        return []
+
+    historical_points = _load_historical_source_points(
+        session,
+        station_id,
+        config_hash,
+        start_utc=start_utc - timedelta(minutes=SOURCE_TIMESTEP_MINUTES),
+        end_utc=min(end_utc + timedelta(minutes=SOURCE_TIMESTEP_MINUTES), transition_utc),
+    )
+    forecast_points = _load_forecast_source_points(
+        session,
+        station_id,
+        config_hash,
+        start_utc=max(start_utc - timedelta(minutes=SOURCE_TIMESTEP_MINUTES), transition_utc),
+        end_utc=end_utc + timedelta(minutes=SOURCE_TIMESTEP_MINUTES),
+    )
+
+    rows: list[InterpolatedSolarProduction] = []
+    current = start_utc
+    step = timedelta(seconds=window.resolution_seconds)
+    while current < end_utc:
+        source_type = "historical" if current < transition_utc else "forecast"
+        source_points = historical_points if source_type == "historical" else forecast_points
+        lower_point, upper_point = _find_bracketing_source_points(
+            source_points,
+            current,
+            source_type,
+            transition_utc=transition_utc,
+        )
+
+        baseline_power_w, interpolation_ratio = interpolate_power(
+            current,
+            lower_point.timestamp_utc,
+            lower_point.power_w,
+            upper_point.timestamp_utc,
+            upper_point.power_w,
+        )
+        weather_state = (
+            lower_point.weather_state
+            if interpolation_ratio < 0.5
+            else upper_point.weather_state
+        )
+        if current == lower_point.timestamp_utc or current == upper_point.timestamp_utc:
+            variation_factor = 1.0
+            power_w = baseline_power_w
+        else:
+            variation_factor = calculate_deterministic_variation_factor(
+                timestamp_utc=current,
+                station_id=station_id,
+                config_hash=config_hash,
+                source_type=source_type,
+                lower_power_w=lower_point.power_w,
+                upper_power_w=upper_point.power_w,
+                resolution_seconds=window.resolution_seconds,
+                weather_state=weather_state,
+            )
+            power_w = apply_interpolation_variation(
+                baseline_power_w=baseline_power_w,
+                variation_factor=variation_factor,
+                lower_power_w=lower_point.power_w,
+                upper_power_w=upper_point.power_w,
+                weather_state=weather_state,
+            )
+
+        rows.append(
+            InterpolatedSolarProduction(
+                station_id=station_id,
+                config_hash=config_hash,
+                timestamp_utc=current,
+                timestamp_local=current.astimezone(station_timezone),
+                source_type=source_type,
+                resolution_seconds=window.resolution_seconds,
+                lower_source_timestamp_utc=lower_point.timestamp_utc,
+                upper_source_timestamp_utc=upper_point.timestamp_utc,
+                lower_power_w=lower_point.power_w,
+                upper_power_w=upper_point.power_w,
+                interpolation_ratio=interpolation_ratio,
+                baseline_power_w=baseline_power_w,
+                variation_factor=variation_factor,
+                power_w=power_w,
+                generated_at_utc=generated_at_utc,
+            )
+        )
+        current += step
+    return rows
+
+
+def _load_historical_source_points(
+    session: Session,
+    station_id: str,
+    config_hash: str,
+    start_utc: datetime,
+    end_utc: datetime,
+) -> list[SourceSolarPoint]:
+    if end_utc <= start_utc:
+        return []
+    rows = list_simulated_solar_for_config(
+        session,
+        station_id,
+        config_hash,
+        start_utc=start_utc,
+        end_utc=end_utc,
+    )
+    return [
+        SourceSolarPoint(
+            timestamp_utc=row.timestamp_utc.astimezone(timezone.utc),
+            timestamp_local=row.timestamp_local,
+            power_w=row.simulated_power_w,
+            weather_state=row.weather_state,
+            source_type="historical",
+        )
+        for row in rows
+    ]
+
+
+def _load_forecast_source_points(
+    session: Session,
+    station_id: str,
+    config_hash: str,
+    start_utc: datetime,
+    end_utc: datetime,
+) -> list[SourceSolarPoint]:
+    if end_utc <= start_utc:
+        return []
+    rows = list_forecast_solar_for_config(
+        session,
+        station_id,
+        config_hash,
+        start_utc=start_utc,
+        end_utc=end_utc,
+    )
+    return [
+        SourceSolarPoint(
+            timestamp_utc=row.timestamp_utc.astimezone(timezone.utc),
+            timestamp_local=row.timestamp_local,
+            power_w=row.forecast_power_w,
+            weather_state=row.weather_state,
+            source_type="forecast",
+        )
+        for row in rows
+    ]
+
+
+def _find_bracketing_source_points(
+    source_points: list[SourceSolarPoint],
+    timestamp_utc: datetime,
+    source_type: str,
+    transition_utc: datetime,
+) -> tuple[SourceSolarPoint, SourceSolarPoint]:
+    timestamp = _as_utc(timestamp_utc)
+    if not source_points:
+        raise RuntimeError(
+            f"Missing {source_type} bracketing solar data for "
+            f"{timestamp.isoformat()}: source table has no rows in the lookup range"
+        )
+
+    timestamps = [point.timestamp_utc for point in source_points]
+    index = bisect_left(timestamps, timestamp)
+    if index < len(source_points) and timestamps[index] == timestamp:
+        point = source_points[index]
+        return point, point
+    lower = source_points[index - 1] if index > 0 else None
+    upper = source_points[index] if index < len(source_points) else None
+
+    if upper is None and source_type == "historical" and lower is not None:
+        transition = _as_utc(transition_utc)
+        source_step = timedelta(minutes=SOURCE_TIMESTEP_MINUTES)
+        if lower.timestamp_utc < timestamp < transition <= lower.timestamp_utc + source_step:
+            upper = SourceSolarPoint(
+                timestamp_utc=transition,
+                timestamp_local=transition.astimezone(lower.timestamp_local.tzinfo),
+                power_w=lower.power_w,
+                weather_state=lower.weather_state,
+                source_type=lower.source_type,
+            )
+
+    if lower is None or upper is None:
+        lower_text = lower.timestamp_utc.isoformat() if lower is not None else "missing"
+        upper_text = upper.timestamp_utc.isoformat() if upper is not None else "missing"
+        raise RuntimeError(
+            f"Missing {source_type} bracketing solar data for {timestamp.isoformat()}: "
+            f"lower={lower_text}, upper={upper_text}"
+        )
+    return lower, upper
 
 
 def run_solar_data_maintenance(
@@ -661,6 +1144,13 @@ def _resolve_current_local_date(
     return now.astimezone(station_timezone).date()
 
 
+def _resolve_now_utc(now: datetime | None = None) -> datetime:
+    if now is None:
+        return datetime.now(timezone.utc).replace(microsecond=0)
+    _require_timezone_aware(now)
+    return now.astimezone(timezone.utc).replace(microsecond=0)
+
+
 def _validate_complete_coverage(
     rows: list[object],
     timestamp_attr: str,
@@ -936,6 +1426,10 @@ def _expected_wall_time_row_count(
 
 def _parse_date(value: str) -> date:
     return date.fromisoformat(value)
+
+
+def _format_optional_datetime(value: datetime | None) -> str:
+    return "none" if value is None else value.isoformat()
 
 
 def _log(message: str) -> None:

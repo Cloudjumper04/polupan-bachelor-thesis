@@ -14,6 +14,10 @@ services:
       - "2025-10-06"
       - --days-ahead
       - "2"
-      - --interval-hours
+      - --maintenance-interval-hours
       - "12"
+      - --fast-cache-interval-seconds
+      - "60"
+      - --full-cache-interval-minutes
+      - "45"
     restart: unless-stopped

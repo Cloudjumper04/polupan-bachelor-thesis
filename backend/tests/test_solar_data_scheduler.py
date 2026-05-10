@@ -659,7 +659,9 @@ def test_scheduler_runs_full_pipeline_before_first_sleep() -> None:
         database_url="sqlite:///cache.db",
         history_start=date(2025, 10, 6),
         days_ahead=2,
-        interval_hours=12.0,
+        maintenance_interval_hours=12.0,
+        fast_cache_interval_seconds=60.0,
+        full_cache_interval_minutes=45.0,
     )
     events: list[object] = []
 
@@ -679,16 +681,29 @@ def test_scheduler_runs_full_pipeline_before_first_sleep() -> None:
         events.append(seconds)
         raise StopScheduler
 
+    def fake_cache_runner(config_path: Path, database_url: str | None):
+        events.append("cache")
+        return solar_data_scheduler.InterpolatedCacheSummary(
+            rows=1,
+            windows=1,
+            start_utc=None,
+            end_utc=None,
+            fast_only=False,
+        )
+
     with pytest.raises(StopScheduler):
         solar_data_scheduler.run_forever(
             settings,
             maintenance_runner=fake_runner,
+            full_cache_runner=fake_cache_runner,
+            fast_cache_runner=fake_cache_runner,
             sleep=fake_sleep,
         )
 
     assert events == [
         (Path("config.yaml"), "sqlite:///cache.db", date(2025, 10, 6), 2),
-        43200.0,
+        "cache",
+        5.0,
     ]
 
 
@@ -700,7 +715,9 @@ def test_scheduler_sleeps_and_retries_later_after_pipeline_failure(
         database_url="sqlite:///cache.db",
         history_start=date(2025, 10, 6),
         days_ahead=2,
-        interval_hours=12.0,
+        maintenance_interval_hours=12.0,
+        fast_cache_interval_seconds=60.0,
+        full_cache_interval_minutes=45.0,
     )
     events: list[object] = []
 
@@ -720,15 +737,27 @@ def test_scheduler_sleeps_and_retries_later_after_pipeline_failure(
         events.append(seconds)
         raise StopScheduler
 
+    def fake_cache_runner(config_path: Path, database_url: str | None):
+        events.append("cache")
+        return solar_data_scheduler.InterpolatedCacheSummary(
+            rows=1,
+            windows=1,
+            start_utc=None,
+            end_utc=None,
+            fast_only=False,
+        )
+
     with pytest.raises(StopScheduler):
         solar_data_scheduler.run_forever(
             settings,
             maintenance_runner=failing_runner,
+            full_cache_runner=fake_cache_runner,
+            fast_cache_runner=fake_cache_runner,
             sleep=fake_sleep,
         )
 
     captured = capsys.readouterr()
-    assert events == ["runner", 43200.0]
+    assert events == ["runner", 5.0]
     assert "solar data maintenance failed: temporary failure" in captured.err
 
 
