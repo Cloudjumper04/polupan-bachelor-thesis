@@ -32,6 +32,15 @@ def delete_weather_observations(
     start_utc: datetime,
     end_utc: datetime,
 ) -> None:
+    delete_weather_observations_for_range(session, station_id, start_utc, end_utc)
+
+
+def delete_weather_observations_for_range(
+    session: Session,
+    station_id: str,
+    start_utc: datetime,
+    end_utc: datetime,
+) -> None:
     existing_observations = list_weather_observations(
         session,
         station_id,
@@ -65,3 +74,35 @@ def list_weather_observations(
         .order_by(WeatherObservation.timestamp_utc)
     )
     return list(session.exec(statement).all())
+
+
+def get_weather_observation_range(
+    session: Session,
+    station_id: str,
+) -> tuple[datetime | None, datetime | None]:
+    first_statement = (
+        select(WeatherObservation)
+        .where(WeatherObservation.station_id == station_id)
+        .order_by(WeatherObservation.timestamp_utc)
+        .limit(1)
+    )
+    last_statement = (
+        select(WeatherObservation)
+        .where(WeatherObservation.station_id == station_id)
+        .order_by(WeatherObservation.timestamp_utc.desc())
+        .limit(1)
+    )
+    first_row = session.exec(first_statement).first()
+    last_row = session.exec(last_statement).first()
+    return (
+        first_row.timestamp_utc if first_row else None,
+        last_row.timestamp_utc if last_row else None,
+    )
+
+
+def get_latest_weather_observation_time(
+    session: Session,
+    station_id: str,
+) -> datetime | None:
+    _, latest_timestamp = get_weather_observation_range(session, station_id)
+    return latest_timestamp

@@ -9,6 +9,7 @@ from app.storage.database import create_db_and_tables, get_engine
 from app.storage.forecast_repository import (
     WeatherForecast,
     delete_forecast_for_station,
+    get_forecast_range,
     get_latest_forecast_fetch_time,
     list_forecast_for_station,
     save_forecast_rows,
@@ -46,6 +47,10 @@ def test_forecast_repository_saves_lists_latest_and_deletes_rows() -> None:
             session,
             "smart_energy_lab",
         ) == fetched_at_utc + timedelta(minutes=5)
+        assert get_forecast_range(session, "smart_energy_lab") == (
+            forecast_start_utc,
+            forecast_start_utc + timedelta(hours=1),
+        )
 
         filtered_rows = list_forecast_for_station(
             session,
@@ -58,6 +63,7 @@ def test_forecast_repository_saves_lists_latest_and_deletes_rows() -> None:
         delete_forecast_for_station(session, "smart_energy_lab")
         assert list_forecast_for_station(session, "smart_energy_lab") == []
         assert get_latest_forecast_fetch_time(session, "smart_energy_lab") is None
+        assert get_forecast_range(session, "smart_energy_lab") == (None, None)
 
 
 def _forecast_row(

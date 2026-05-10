@@ -60,6 +60,30 @@ def list_forecast_for_station(
     return list(session.exec(statement).all())
 
 
+def get_forecast_range(
+    session: Session,
+    station_id: str,
+) -> tuple[datetime | None, datetime | None]:
+    first_statement = (
+        select(WeatherForecast)
+        .where(WeatherForecast.station_id == station_id)
+        .order_by(WeatherForecast.forecast_timestamp_utc)
+        .limit(1)
+    )
+    last_statement = (
+        select(WeatherForecast)
+        .where(WeatherForecast.station_id == station_id)
+        .order_by(WeatherForecast.forecast_timestamp_utc.desc())
+        .limit(1)
+    )
+    first_row = session.exec(first_statement).first()
+    last_row = session.exec(last_statement).first()
+    return (
+        first_row.forecast_timestamp_utc if first_row else None,
+        last_row.forecast_timestamp_utc if last_row else None,
+    )
+
+
 def get_latest_forecast_fetch_time(
     session: Session,
     station_id: str,
