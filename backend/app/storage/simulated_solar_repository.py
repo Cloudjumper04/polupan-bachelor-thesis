@@ -72,3 +72,30 @@ def list_simulated_solar_for_config(
     if limit is not None:
         statement = statement.limit(limit)
     return list(session.exec(statement).all())
+
+
+def get_simulated_solar_range(
+    session: Session,
+    station_id: str,
+    config_hash: str,
+) -> tuple[datetime | None, datetime | None]:
+    first_statement = (
+        select(SimulatedSolarProduction)
+        .where(SimulatedSolarProduction.station_id == station_id)
+        .where(SimulatedSolarProduction.config_hash == config_hash)
+        .order_by(SimulatedSolarProduction.timestamp_utc)
+        .limit(1)
+    )
+    last_statement = (
+        select(SimulatedSolarProduction)
+        .where(SimulatedSolarProduction.station_id == station_id)
+        .where(SimulatedSolarProduction.config_hash == config_hash)
+        .order_by(SimulatedSolarProduction.timestamp_utc.desc())
+        .limit(1)
+    )
+    first_row = session.exec(first_statement).first()
+    last_row = session.exec(last_statement).first()
+    return (
+        first_row.timestamp_utc if first_row else None,
+        last_row.timestamp_utc if last_row else None,
+    )

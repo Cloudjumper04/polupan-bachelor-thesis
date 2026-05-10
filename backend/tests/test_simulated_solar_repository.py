@@ -9,6 +9,7 @@ from app.storage.database import create_db_and_tables, get_engine
 from app.storage.simulated_solar_repository import (
     SimulatedSolarProduction,
     delete_simulated_solar_for_config,
+    get_simulated_solar_range,
     list_simulated_solar_for_config,
     save_simulated_solar_points,
 )
@@ -45,6 +46,10 @@ def test_simulated_solar_repository_saves_lists_and_deletes_points() -> None:
         assert saved_points[0].weather_state == "cloudy"
         assert saved_points[0].timestamp_utc.tzinfo == timezone.utc
         assert saved_points[0].timestamp_local.utcoffset().total_seconds() == 7200
+        assert get_simulated_solar_range(session, "smart_energy_lab", "test_hash") == (
+            start_utc,
+            start_utc,
+        )
 
         delete_simulated_solar_for_config(
             session,
@@ -60,4 +65,8 @@ def test_simulated_solar_repository_saves_lists_and_deletes_points() -> None:
                 "test_hash",
             )
             == []
+        )
+        assert get_simulated_solar_range(session, "smart_energy_lab", "test_hash") == (
+            None,
+            None,
         )

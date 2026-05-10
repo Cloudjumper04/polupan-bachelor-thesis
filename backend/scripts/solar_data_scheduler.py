@@ -365,6 +365,60 @@ def ensure_historical_adjusted_solar_coverage(
             regenerated=False,
         )
 
+    rebuild_start_date = history_start
+    if existing_points:
+        latest_existing_date = existing_points[-1].timestamp_local.astimezone(
+            station_timezone,
+        ).date()
+        latest_existing_end_utc = datetime.combine(
+            latest_existing_date + timedelta(days=1),
+            datetime_time.min,
+            tzinfo=station_timezone,
+        ).astimezone(timezone.utc)
+        prefix_points = [
+            point
+            for point in existing_points
+            if point.timestamp_utc < latest_existing_end_utc
+        ]
+        prefix_is_complete = _has_complete_coverage(
+            prefix_points,
+            timestamp_attr="timestamp_utc",
+            start_utc=start_utc,
+            end_utc=latest_existing_end_utc,
+            timestep_minutes=SOLAR_TIMESTEP_MINUTES,
+        )
+        if prefix_is_complete and latest_existing_date < yesterday:
+            rebuild_start_date = latest_existing_date + timedelta(days=1)
+
+    generated_rows = _regenerate_historical_adjusted_solar_range(
+        session=session,
+        station_id=station_id,
+        config_hash=config_hash,
+        station_timezone=station_timezone,
+        start_date=rebuild_start_date,
+        end_date=yesterday,
+    )
+    return AdjustedSolarMaintenanceSummary(
+        start_utc=start_utc,
+        end_utc=end_utc,
+        rows=generated_rows,
+        regenerated=True,
+    )
+
+
+def _regenerate_historical_adjusted_solar_range(
+    session: Session,
+    station_id: str,
+    config_hash: str,
+    station_timezone: ZoneInfo,
+    start_date: date,
+    end_date: date,
+) -> int:
+    start_utc, end_utc = _date_range_to_utc_bounds(
+        start_date,
+        end_date,
+        station_timezone,
+    )
     ideal_points = list_ideal_solar_for_config(
         session,
         station_id,
@@ -393,12 +447,12 @@ def ensure_historical_adjusted_solar_coverage(
         start_utc=start_utc,
         end_utc=end_utc,
         start_local=datetime.combine(
-            history_start,
+            start_date,
             datetime_time.min,
             tzinfo=station_timezone,
         ),
         end_local=datetime.combine(
-            yesterday + timedelta(days=1),
+            end_date + timedelta(days=1),
             datetime_time.min,
             tzinfo=station_timezone,
         ),
@@ -419,12 +473,7 @@ def ensure_historical_adjusted_solar_coverage(
         end_utc,
     )
     save_simulated_solar_points(session, simulated_points)
-    return AdjustedSolarMaintenanceSummary(
-        start_utc=start_utc,
-        end_utc=end_utc,
-        rows=len(simulated_points),
-        regenerated=True,
-    )
+    return len(simulated_points)
 
 
 def regenerate_forecast_adjusted_solar(

@@ -17,7 +17,11 @@ from app.storage.forecast_repository import (
     save_forecast_rows,
 )
 from app.storage.forecast_solar_repository import list_forecast_solar_for_config
-from app.storage.simulated_solar_repository import list_simulated_solar_for_config
+from app.storage.simulated_solar_repository import (
+    SimulatedSolarProduction,
+    list_simulated_solar_for_config,
+    save_simulated_solar_points,
+)
 from app.storage.solar_repository import (
     IdealSolarProduction,
     list_ideal_solar_for_config,
@@ -227,6 +231,224 @@ def test_historical_adjusted_maintenance_is_not_blocked_after_old_may_2026_limit
     assert summary.rows == 96
     assert len(rows) == 96
     assert rows[-1].timestamp_local.date() == date(2026, 5, 9)
+
+
+def test_historical_adjusted_maintenance_does_nothing_when_complete_through_yesterday(
+    tmp_path: Path,
+) -> None:
+    config_hash = calculate_config_hash(load_config(CONFIG_PATH))
+    database_url = _database_url(tmp_path)
+    engine = get_engine(database_url)
+    create_db_and_tables(engine)
+    start_utc, end_utc = solar_data_scheduler._date_range_to_utc_bounds(
+        date(2025, 10, 6),
+        date(2025, 10, 7),
+        STATION_TIMEZONE,
+    )
+
+    with Session(engine) as session:
+        _save_ideal_weather_and_simulated_rows(
+            session,
+            config_hash,
+            date(2025, 10, 6),
+            date(2025, 10, 7),
+        )
+
+        summary = solar_data_scheduler.ensure_historical_adjusted_solar_coverage(
+            session=session,
+            station_id=STATION_ID,
+            config_hash=config_hash,
+            station_timezone=STATION_TIMEZONE,
+            history_start=date(2025, 10, 6),
+            current_local_date=date(2025, 10, 8),
+        )
+        rows = list_simulated_solar_for_config(
+            session,
+            STATION_ID,
+            config_hash,
+            start_utc=start_utc,
+            end_utc=end_utc,
+        )
+
+    assert summary.regenerated is False
+    assert summary.rows == 192
+    assert len(rows) == 192
+    assert {row.simulated_power_w for row in rows} == {77.0}
+
+
+def test_historical_adjusted_maintenance_appends_only_missing_yesterday(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_hash = calculate_config_hash(load_config(CONFIG_PATH))
+    database_url = _database_url(tmp_path)
+    engine = get_engine(database_url)
+    create_db_and_tables(engine)
+    delete_ranges: list[tuple[datetime, datetime]] = []
+    original_delete = solar_data_scheduler.delete_simulated_solar_for_config
+
+    def capture_delete(
+        session: Session,
+        station_id: str,
+        config_hash: str,
+        start_utc: datetime,
+        end_utc: datetime,
+    ) -> None:
+        delete_ranges.append((start_utc, end_utc))
+        original_delete(session, station_id, config_hash, start_utc, end_utc)
+
+    monkeypatch.setattr(
+        solar_data_scheduler,
+        "delete_simulated_solar_for_config",
+        capture_delete,
+    )
+    missing_start_utc, missing_end_utc = solar_data_scheduler._date_range_to_utc_bounds(
+        date(2025, 10, 7),
+        date(2025, 10, 7),
+        STATION_TIMEZONE,
+    )
+
+    with Session(engine) as session:
+        _save_ideal_and_weather_rows(
+            session,
+            config_hash,
+            date(2025, 10, 6),
+            date(2025, 10, 7),
+        )
+        _save_simulated_rows(
+            session,
+            config_hash,
+            date(2025, 10, 6),
+            date(2025, 10, 6),
+            simulated_power_w=77.0,
+        )
+
+        summary = solar_data_scheduler.ensure_historical_adjusted_solar_coverage(
+            session=session,
+            station_id=STATION_ID,
+            config_hash=config_hash,
+            station_timezone=STATION_TIMEZONE,
+            history_start=date(2025, 10, 6),
+            current_local_date=date(2025, 10, 8),
+        )
+        all_rows = list_simulated_solar_for_config(session, STATION_ID, config_hash)
+
+    assert summary.regenerated is True
+    assert summary.rows == 96
+    assert delete_ranges == [(missing_start_utc, missing_end_utc)]
+    assert len(all_rows) == 192
+    preserved_rows = [
+        row for row in all_rows if row.timestamp_local.date() == date(2025, 10, 6)
+    ]
+    appended_rows = [
+        row for row in all_rows if row.timestamp_local.date() == date(2025, 10, 7)
+    ]
+    assert len(preserved_rows) == 96
+    assert len(appended_rows) == 96
+    assert {row.simulated_power_w for row in preserved_rows} == {77.0}
+
+
+def test_historical_adjusted_maintenance_rebuilds_full_range_when_existing_has_gap(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_hash = calculate_config_hash(load_config(CONFIG_PATH))
+    database_url = _database_url(tmp_path)
+    engine = get_engine(database_url)
+    create_db_and_tables(engine)
+    delete_ranges: list[tuple[datetime, datetime]] = []
+    original_delete = solar_data_scheduler.delete_simulated_solar_for_config
+
+    def capture_delete(
+        session: Session,
+        station_id: str,
+        config_hash: str,
+        start_utc: datetime,
+        end_utc: datetime,
+    ) -> None:
+        delete_ranges.append((start_utc, end_utc))
+        original_delete(session, station_id, config_hash, start_utc, end_utc)
+
+    monkeypatch.setattr(
+        solar_data_scheduler,
+        "delete_simulated_solar_for_config",
+        capture_delete,
+    )
+    full_start_utc, full_end_utc = solar_data_scheduler._date_range_to_utc_bounds(
+        date(2025, 10, 6),
+        date(2025, 10, 7),
+        STATION_TIMEZONE,
+    )
+
+    with Session(engine) as session:
+        _save_ideal_and_weather_rows(
+            session,
+            config_hash,
+            date(2025, 10, 6),
+            date(2025, 10, 7),
+        )
+        _save_simulated_rows(
+            session,
+            config_hash,
+            date(2025, 10, 6),
+            date(2025, 10, 7),
+            simulated_power_w=77.0,
+            skip_index=10,
+        )
+
+        summary = solar_data_scheduler.ensure_historical_adjusted_solar_coverage(
+            session=session,
+            station_id=STATION_ID,
+            config_hash=config_hash,
+            station_timezone=STATION_TIMEZONE,
+            history_start=date(2025, 10, 6),
+            current_local_date=date(2025, 10, 8),
+        )
+        rows = list_simulated_solar_for_config(session, STATION_ID, config_hash)
+
+    assert summary.regenerated is True
+    assert summary.rows == 192
+    assert delete_ranges == [(full_start_utc, full_end_utc)]
+    assert len(rows) == 192
+
+
+def test_historical_adjusted_maintenance_does_not_use_forecast_rows(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_hash = calculate_config_hash(load_config(CONFIG_PATH))
+    database_url = _database_url(tmp_path)
+    engine = get_engine(database_url)
+    create_db_and_tables(engine)
+
+    def fail_forecast_lookup(*args: object, **kwargs: object) -> list[WeatherForecast]:
+        raise AssertionError("historical adjusted solar must not read forecast rows")
+
+    monkeypatch.setattr(
+        solar_data_scheduler,
+        "list_forecast_for_station",
+        fail_forecast_lookup,
+    )
+
+    with Session(engine) as session:
+        _save_ideal_and_weather_rows(
+            session,
+            config_hash,
+            date(2025, 10, 6),
+            date(2025, 10, 6),
+        )
+
+        summary = solar_data_scheduler.ensure_historical_adjusted_solar_coverage(
+            session=session,
+            station_id=STATION_ID,
+            config_hash=config_hash,
+            station_timezone=STATION_TIMEZONE,
+            history_start=date(2025, 10, 6),
+            current_local_date=date(2025, 10, 7),
+        )
+
+    assert summary.regenerated is True
+    assert summary.rows == 96
 
 
 def test_forecast_adjusted_solar_uses_previous_forecast_row_and_caps_power() -> None:
@@ -684,6 +906,91 @@ def _iter_local_hours(
         timestamps.append(current)
         current += timedelta(hours=1)
     return timestamps
+
+
+def _save_ideal_weather_and_simulated_rows(
+    session: Session,
+    config_hash: str,
+    start_date: date,
+    end_date: date,
+) -> None:
+    _save_ideal_and_weather_rows(session, config_hash, start_date, end_date)
+    _save_simulated_rows(
+        session,
+        config_hash,
+        start_date,
+        end_date,
+        simulated_power_w=77.0,
+    )
+
+
+def _save_ideal_and_weather_rows(
+    session: Session,
+    config_hash: str,
+    start_date: date,
+    end_date: date,
+) -> None:
+    start_utc, end_utc = solar_data_scheduler._date_range_to_utc_bounds(
+        start_date,
+        end_date,
+        STATION_TIMEZONE,
+    )
+    ideal_rows: list[IdealSolarProduction] = []
+    current = start_utc
+    while current < end_utc:
+        ideal_rows.append(
+            _ideal_row(
+                timestamp_utc=current,
+                ideal_power_w=100.0,
+                config_hash=config_hash,
+            )
+        )
+        current += timedelta(minutes=15)
+    save_ideal_solar_points(session, ideal_rows)
+    save_weather_observations(
+        session,
+        [
+            _weather_row(local_time.astimezone(timezone.utc))
+            for local_time in _iter_local_hours(start_date, end_date, STATION_TIMEZONE)
+        ],
+    )
+
+
+def _save_simulated_rows(
+    session: Session,
+    config_hash: str,
+    start_date: date,
+    end_date: date,
+    simulated_power_w: float,
+    skip_index: int | None = None,
+) -> None:
+    start_utc, end_utc = solar_data_scheduler._date_range_to_utc_bounds(
+        start_date,
+        end_date,
+        STATION_TIMEZONE,
+    )
+    rows: list[SimulatedSolarProduction] = []
+    current = start_utc
+    index = 0
+    while current < end_utc:
+        if index != skip_index:
+            rows.append(
+                SimulatedSolarProduction(
+                    station_id=STATION_ID,
+                    config_hash=config_hash,
+                    timestamp_utc=current,
+                    timestamp_local=current.astimezone(STATION_TIMEZONE),
+                    ideal_power_w=100.0,
+                    weather_code=0,
+                    weather_state="clear",
+                    cloud_cover_percent=10.0,
+                    weather_factor=0.77,
+                    simulated_power_w=simulated_power_w,
+                )
+            )
+        current += timedelta(minutes=15)
+        index += 1
+    save_simulated_solar_points(session, rows)
 
 
 def _local_wall_rows(
