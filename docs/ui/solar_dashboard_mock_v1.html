@@ -1,0 +1,981 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SmartEnergy Lab — Solar Dashboard Mock</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Jura:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --yellow: #ffdd55;
+      --paper: #f3f3f1;
+      --surface: #ffffff;
+      --surface-2: #f8f8f6;
+      --black: #050505;
+      --muted: #606060;
+      --line: #d9d9d4;
+      --line-dark: #b8b8af;
+      --shadow: 0 16px 40px rgba(0, 0, 0, 0.10);
+      --radius: 16px;
+      --font: "Jura", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: var(--font);
+      font-weight: 600;
+      color: var(--black);
+      background: var(--paper);
+    }
+
+    .site-header,
+    .site-footer {
+      background: var(--yellow);
+      color: var(--black);
+      overflow: hidden;
+    }
+
+    .header-inner,
+    .footer-inner,
+    .page {
+      max-width: 1500px;
+      margin: 0 auto;
+      padding-left: 28px;
+      padding-right: 28px;
+    }
+
+    .header-inner {
+      height: 58px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 18px;
+      align-items: center;
+    }
+
+    .brand { min-width: 0; }
+
+    .brand-title {
+      font-size: 20px;
+      font-weight: 900;
+      letter-spacing: -0.5px;
+      line-height: 1;
+      text-shadow: 0.25px 0 currentColor;
+    }
+
+    .brand-subtitle {
+      margin-top: 4px;
+      color: rgba(0,0,0,0.72);
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 760px;
+    }
+
+    .header-widgets {
+      display: flex;
+      justify-content: flex-end;
+      align-items: center;
+      min-width: 360px;
+    }
+
+    .weather-widget {
+      display: flex;
+      align-items: center;
+      gap: 13px;
+      height: 42px;
+      padding: 5px 15px 5px 7px;
+      border: 1px solid rgba(255,255,255,0.16);
+      border-radius: 21px;
+      background: rgba(5,5,5,0.78);
+      color: #fff;
+      cursor: help;
+      box-shadow: 0 8px 18px rgba(0,0,0,0.14);
+      backdrop-filter: blur(5px);
+    }
+
+    .weather-icon {
+      width: 30px;
+      height: 30px;
+      display: grid;
+      place-items: center;
+      flex: 0 0 auto;
+      color: #fff;
+    }
+
+    .weather-icon svg {
+      width: 30px;
+      height: 30px;
+      display: block;
+      background: transparent;
+      border: 0;
+      border-radius: 0;
+    }
+
+    .weather-main {
+      display: grid;
+      gap: 1px;
+      min-width: 126px;
+    }
+
+    .weather-main .clouds,
+    .weather-main .temp {
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 1.05;
+      white-space: nowrap;
+      color: #fff;
+    }
+
+    .sun-times {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding-left: 12px;
+      border-left: 1px solid rgba(255,255,255,0.26);
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+      color: #fff;
+    }
+
+    .sun-time {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .sun-time svg {
+      width: 14px;
+      height: 14px;
+      background: transparent;
+      border: 0;
+      border-radius: 0;
+    }
+
+    .page {
+      min-height: calc(100vh - 100px);
+      padding-top: 24px;
+      padding-bottom: 24px;
+    }
+
+    .main-layout {
+      width: 100%;
+      min-height: calc(100vh - 154px);
+    }
+
+    .solar-card,
+    .history-panel {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+
+    .solar-card {
+      width: min(50%, 760px);
+      height: 50vh;
+      min-height: 430px;
+      display: grid;
+      grid-template-rows: 112px minmax(0, 1fr) 34px;
+      overflow: hidden;
+      position: relative;
+      transition: width 180ms ease, height 180ms ease, min-height 180ms ease;
+    }
+
+    .solar-card.expanded {
+      width: 100%;
+      max-width: none;
+      height: 75vh;
+      min-height: 620px;
+      grid-template-rows: 68px minmax(0, 1fr) 34px;
+    }
+
+    .expand-card-button {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      z-index: 5;
+      width: 28px;
+      height: 28px;
+      display: grid;
+      place-items: center;
+      border: 1px solid var(--line-dark);
+      border-radius: 9px;
+      background: rgba(255,255,255,0.86);
+      color: var(--black);
+      cursor: pointer;
+      padding: 0;
+    }
+
+    .expand-card-button svg {
+      width: 15px;
+      height: 15px;
+      background: transparent;
+      border: 0;
+      border-radius: 0;
+    }
+
+    .solar-card.expanded .expand-card-button svg {
+      transform: rotate(180deg);
+    }
+
+    .solar-card.expanded .solar-card-head {
+      height: 68px;
+      grid-template-columns: minmax(300px, 1fr) 1px minmax(150px, 0.34fr) minmax(150px, 0.34fr) minmax(150px, 0.34fr);
+      padding: 8px 52px 8px 22px;
+      gap: 18px;
+      align-items: center;
+    }
+
+    .solar-card.expanded .solar-title {
+      justify-content: center;
+      padding: 0;
+    }
+
+    .solar-card.expanded .solar-title h1 br {
+      display: none;
+    }
+
+    .solar-card.expanded .solar-title h1 {
+      font-size: 30px;
+      line-height: 1;
+      white-space: nowrap;
+      text-align: center;
+    }
+
+    .solar-card.expanded .solar-title-bubble {
+      max-width: none;
+      min-height: 0;
+      padding: 0;
+      width: 100%;
+    }
+
+    .solar-card.expanded .title-separator {
+      height: 42px;
+    }
+
+    .solar-card.expanded .power-summary-wrap,
+    .solar-card.expanded .power-summary,
+    .solar-card.expanded .sub-metrics {
+      display: contents;
+    }
+
+    .solar-card.expanded .power-total,
+    .solar-card.expanded .sub-metric {
+      min-width: 0;
+      padding: 0;
+      border-bottom: 0;
+      align-self: center;
+    }
+
+    .solar-card.expanded .sub-metric .value,
+    .solar-card.expanded .power-value {
+      margin-top: 1px;
+      font-size: 28px;
+      font-weight: 800;
+      letter-spacing: -0.6px;
+      line-height: 1;
+    }
+
+    .solar-card-head {
+      height: 112px;
+      padding: 14px 52px 14px 18px;
+      display: grid;
+      grid-template-columns: minmax(160px, 0.72fr) 1px minmax(230px, 1fr);
+      gap: 18px;
+      align-items: center;
+      background: var(--surface-2);
+      border-bottom: 1px solid var(--line);
+      overflow: hidden;
+    }
+
+    .solar-title {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      min-width: 0;
+      text-align: center;
+      padding: 0;
+    }
+
+    .solar-title-bubble {
+      width: 100%;
+      max-width: 230px;
+      min-height: 76px;
+      padding: 12px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .solar-title h1 {
+      margin: 0;
+      font-size: clamp(23px, 2.05vw, 32px);
+      font-weight: 900;
+      line-height: 0.96;
+      letter-spacing: -0.8px;
+      color: var(--black);
+      text-shadow: 0.35px 0 currentColor;
+    }
+
+    .title-separator {
+      width: 1px;
+      height: 68px;
+      background: var(--line-dark);
+    }
+
+    .power-summary-wrap {
+      display: flex;
+      align-items: center;
+      min-width: 0;
+      height: 100%;
+      padding: 0 12px;
+    }
+
+    .power-summary {
+      display: grid;
+      grid-template-rows: auto auto;
+      align-content: center;
+      gap: 7px;
+      width: min(300px, 100%);
+      min-width: 0;
+    }
+
+    .power-total {
+      padding-bottom: 6px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .metric-label {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .power-value {
+      margin-top: 1px;
+      font-size: 28px;
+      font-weight: 800;
+      letter-spacing: -0.6px;
+      line-height: 1;
+    }
+
+    .unit {
+      font-size: 13px;
+      font-weight: 600;
+      color: rgba(0,0,0,0.68);
+    }
+
+    .sub-metrics {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 9px;
+      width: 100%;
+      min-width: 0;
+    }
+
+    .sub-metric { min-width: 0; }
+
+    .sub-metric .value {
+      margin-top: 2px;
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: -0.2px;
+      white-space: nowrap;
+    }
+
+    .chart-box {
+      margin: 10px 12px 0;
+      min-height: 0;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: white;
+      overflow: hidden;
+      display: grid;
+      grid-template-rows: minmax(0, 1fr);
+      position: relative;
+    }
+
+    .charts-scroll {
+      min-height: 0;
+      overflow-y: auto;
+      padding: 8px;
+      display: grid;
+      gap: 8px;
+      align-content: start;
+    }
+
+    .chart-card {
+      min-height: 158px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--surface-2);
+      overflow: hidden;
+      display: grid;
+      grid-template-rows: 32px 1fr;
+    }
+
+    .solar-card.expanded .chart-card {
+      min-height: 260px;
+    }
+
+    .chart-card.hidden { display: none; }
+
+    .chart-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 0 8px;
+      border-bottom: 1px solid #ecece7;
+      background: white;
+    }
+
+    .chart-title {
+      font-size: 14px;
+      font-weight: 800;
+      text-shadow: 0.18px 0 currentColor;
+    }
+
+    .solar-card.expanded .chart-title {
+      font-size: 15px;
+    }
+
+    .chart-meta {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .chart-wrap {
+      min-height: 0;
+      padding: 6px 7px 7px;
+    }
+
+    svg {
+      width: 100%;
+      height: 100%;
+      display: block;
+      background: var(--surface-2);
+      border: 1px solid #eeeeea;
+      border-radius: 7px;
+    }
+
+    .grid-line { stroke: rgba(0,0,0,0.13); stroke-width: 1; }
+    .axis-label { fill: #575757; font-size: 14px; font-weight: 650; }
+    .area { fill: rgba(255, 221, 85, 0.42); }
+    .line { fill: none; stroke: #050505; stroke-width: 2.3; stroke-linejoin: round; stroke-linecap: round; }
+    .point { fill: var(--yellow); stroke: #050505; stroke-width: 1.7; }
+    .now-line { stroke: rgba(0,0,0,0.58); stroke-width: 1.3; stroke-dasharray: 4 4; }
+
+    .solar-card-foot {
+      height: 34px;
+      padding: 6px 13px 9px;
+      display: flex;
+      justify-content: flex-end;
+      align-items: center;
+    }
+
+    .history-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      border: 0;
+      background: transparent;
+      color: var(--black);
+      font-family: var(--font);
+      font-size: 12px;
+      font-weight: 500;
+      text-decoration: none;
+      cursor: pointer;
+      padding: 0;
+    }
+
+    .history-link svg {
+      width: 14px;
+      height: 14px;
+      background: transparent;
+      border: 0;
+      border-radius: 0;
+      transition: transform 140ms ease;
+    }
+
+    .history-link.expanded svg { transform: rotate(180deg); }
+
+    .history-panel {
+      display: none;
+      width: 100%;
+      height: 50vh;
+      min-height: 380px;
+      margin-top: 22px;
+      padding: 18px 20px 20px;
+    }
+
+    .history-panel.active {
+      display: grid;
+      grid-template-rows: auto auto minmax(0, 1fr);
+    }
+
+    .history-head {
+      display: block;
+      margin-bottom: 12px;
+    }
+
+    .history-panel h2 {
+      margin: 0;
+      font-size: 24px;
+      font-weight: 800;
+      letter-spacing: -0.4px;
+    }
+
+    .history-toolbar {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 260px));
+      gap: 10px;
+      margin: 0 0 12px;
+    }
+
+    .field {
+      display: grid;
+      gap: 6px;
+    }
+
+    .field span {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .field input {
+      width: 100%;
+      border: 1px solid var(--line-dark);
+      border-radius: 8px;
+      padding: 10px 11px;
+      font: inherit;
+      font-size: 13px;
+      color: var(--black);
+      background: white;
+    }
+
+    .site-footer {
+      height: 42px;
+      border-top: 1px solid rgba(0,0,0,0.12);
+    }
+
+    .footer-inner { height: 42px; }
+
+    @media (max-width: 1240px) {
+      .solar-card { width: min(62%, 760px); }
+      .solar-card.expanded { width: 100%; }
+    }
+
+    @media (max-width: 1100px) {
+      .solar-card { width: 70%; }
+      .solar-card.expanded { width: 100%; }
+    }
+
+    @media (max-width: 900px) {
+      .header-widgets { display: none; }
+      .header-inner { grid-template-columns: minmax(0, 1fr); }
+      .brand-subtitle { max-width: 100%; }
+      .solar-card { width: 100%; }
+    }
+
+    @media (max-width: 720px) {
+      .header-inner,
+      .footer-inner,
+      .page {
+        padding-left: 14px;
+        padding-right: 14px;
+      }
+
+      .solar-card {
+        height: auto;
+        min-height: 0;
+        grid-template-rows: 112px minmax(360px, 1fr) 34px;
+      }
+
+      .solar-card.expanded {
+        height: 75vh;
+        min-height: 560px;
+      }
+
+      .solar-card-head {
+        height: 112px;
+        grid-template-columns: minmax(124px, 0.75fr) 1px minmax(190px, 1fr);
+        gap: 10px;
+        padding: 12px 42px 12px 14px;
+      }
+
+      .solar-title-bubble {
+        min-height: 74px;
+        padding: 10px 12px;
+        border-radius: 16px;
+      }
+
+      .solar-title h1 { font-size: 22px; }
+      .power-summary-wrap { padding: 0 6px; }
+      .power-value { font-size: 23px; }
+      .sub-metric .value { font-size: 14px; }
+      .chart-box { min-height: 360px; }
+    }
+  </style>
+</head>
+<body>
+  <header class="site-header">
+    <div class="header-inner">
+      <div class="brand">
+        <div>
+          <div class="brand-title">SmartEnergy Lab</div>
+          <div class="brand-subtitle">Програмний модуль автоматизації режимів зарядки акумуляторних батарей</div>
+        </div>
+      </div>
+
+      <div class="header-widgets" aria-label="Віджет прогнозу погоди та часу">
+        <div class="weather-widget" id="weatherWidget" title="Погода: —">
+          <div class="weather-icon" id="weatherIcon" aria-hidden="true"></div>
+          <div class="weather-main">
+            <div class="clouds" id="headerClouds">Хмарність: —</div>
+            <div class="temp" id="headerTemp">Температура: —</div>
+          </div>
+          <div class="sun-times" aria-label="Схід і захід сонця">
+            <span class="sun-time" id="sunriseText"></span>
+            <span class="sun-time" id="sunsetText"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="page">
+    <section class="main-layout">
+      <section class="solar-card" id="solarCard">
+        <button class="expand-card-button" id="expandCardToggle" type="button" aria-label="Розгорнути блок графіків" aria-expanded="false">
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M8 3H3v5M16 3h5v5M21 16v5h-5M3 16v5h5M3 8l6-6M15 2l6 6M21 16l-6 6M9 22l-6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+
+        <header class="solar-card-head">
+          <div class="solar-title">
+            <div class="solar-title-bubble">
+              <h1>Сонячна <br>генерація</h1>
+            </div>
+          </div>
+          <div class="title-separator" aria-hidden="true"></div>
+          <div class="power-summary-wrap">
+            <div class="power-summary">
+              <div class="power-total">
+                <div class="metric-label">Загальна потужність</div>
+                <div class="power-value" id="currentPower">— <span class="unit">W</span></div>
+              </div>
+              <div class="sub-metrics">
+                <div class="sub-metric">
+                  <div class="metric-label">Напруга</div>
+                  <div class="value" id="currentVoltage">— <span class="unit">V</span></div>
+                </div>
+                <div class="sub-metric">
+                  <div class="metric-label">Струм</div>
+                  <div class="value" id="currentCurrent">— <span class="unit">A</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        <section class="chart-box">
+          <div class="charts-scroll" id="previewBody">
+            <article class="chart-card" data-chart-card="last30m">
+              <div class="chart-head">
+                <div class="chart-title">Останні 30 хвилин</div>
+                <div class="chart-meta" id="meta-last30m">—</div>
+              </div>
+              <div class="chart-wrap" id="chart-last30m"></div>
+            </article>
+
+            <article class="chart-card" data-chart-card="last3h">
+              <div class="chart-head">
+                <div class="chart-title">Останні 3 години</div>
+                <div class="chart-meta" id="meta-last3h">—</div>
+              </div>
+              <div class="chart-wrap" id="chart-last3h"></div>
+            </article>
+
+            <article class="chart-card" data-chart-card="last12h">
+              <div class="chart-head">
+                <div class="chart-title">Останні 12 годин</div>
+                <div class="chart-meta" id="meta-last12h">—</div>
+              </div>
+              <div class="chart-wrap" id="chart-last12h"></div>
+            </article>
+
+            <article class="chart-card" data-chart-card="last24h">
+              <div class="chart-head">
+                <div class="chart-title">Останні 24 години</div>
+                <div class="chart-meta" id="meta-last24h">—</div>
+              </div>
+              <div class="chart-wrap" id="chart-last24h"></div>
+            </article>
+
+            <article class="chart-card" data-chart-card="last7d">
+              <div class="chart-head">
+                <div class="chart-title">Останні 7 днів</div>
+                <div class="chart-meta" id="meta-last7d">—</div>
+              </div>
+              <div class="chart-wrap" id="chart-last7d"></div>
+            </article>
+          </div>
+        </section>
+
+        <footer class="solar-card-foot">
+          <button class="history-link" id="historyToggle" type="button" aria-expanded="false">
+            історія генерації
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m7 10 5 5 5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+        </footer>
+      </section>
+
+      <section class="history-panel" id="historyPanel">
+        <div class="history-head">
+          <h2>Історія генерації</h2>
+        </div>
+
+        <div class="history-toolbar">
+          <label class="field"><span>Від</span><input type="datetime-local" value="2026-05-03T00:00"></label>
+          <label class="field"><span>До</span><input type="datetime-local" value="2026-05-10T16:15"></label>
+        </div>
+        <div class="chart-wrap" id="chart-history"></div>
+      </section>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-inner" aria-hidden="true"></div>
+  </footer>
+
+  <script>
+    const MAX_POWER_W = 385;
+    const now = new Date();
+
+    const chartDefs = {
+      last30m: { el: "chart-last30m", meta: "meta-last30m", minutes: 30, points: 240 },
+      last3h: { el: "chart-last3h", meta: "meta-last3h", minutes: 180, points: 260 },
+      last12h: { el: "chart-last12h", meta: "meta-last12h", minutes: 720, points: 280 },
+      last24h: { el: "chart-last24h", meta: "meta-last24h", minutes: 1440, points: 300 },
+      last7d: { el: "chart-last7d", meta: "meta-last7d", minutes: 10080, points: 360 },
+      history: { el: "chart-history", minutes: 10080, points: 320, history: true }
+    };
+
+    function seedNoise(x) {
+      const s = Math.sin(x * 12.9898 + 78.233) * 43758.5453;
+      return s - Math.floor(s);
+    }
+
+    function clamp(v, min, max) {
+      return Math.max(min, Math.min(max, v));
+    }
+
+    function roundDown15(d) {
+      const x = new Date(d);
+      x.setMinutes(Math.floor(x.getMinutes() / 15) * 15, 0, 0);
+      return x;
+    }
+
+    function solarCurve(date) {
+      const h = date.getHours() + date.getMinutes() / 60 + date.getSeconds() / 3600;
+      const sunrise = 5.1;
+      const sunset = 20.4;
+      if (h < sunrise || h > sunset) return 0;
+      const p = (h - sunrise) / (sunset - sunrise);
+      const bell = Math.sin(Math.PI * p);
+      const seasonal = 0.88 + 0.12 * Math.sin((date.getMonth() + date.getDate() / 31) / 12 * Math.PI * 2);
+      return Math.pow(bell, 1.45) * seasonal;
+    }
+
+    function cloudFactor(date) {
+      const t = date.getTime() / 1000;
+      const slow = 0.80 + 0.12 * Math.sin(t / 1900) + 0.06 * Math.sin(t / 430);
+      const movingCloud = 0.10 * Math.sin(t / 77) + 0.035 * Math.sin(t / 19);
+      const smallBreaks = seedNoise(Math.floor(t / 17)) > 0.93 ? 0.10 : 0;
+      return clamp(slow + movingCloud + smallBreaks, 0.34, 1.04);
+    }
+
+    function powerAt(date) {
+      const base = MAX_POWER_W * solarCurve(date);
+      const factor = cloudFactor(date);
+      const ripple = 1 + 0.012 * Math.sin(date.getTime() / 1000 / 11);
+      return Math.max(0, base * factor * ripple);
+    }
+
+    function makeSeries(minutes, points, history = false) {
+      const result = [];
+      const spanMs = minutes * 60 * 1000;
+      const end = history ? roundDown15(now) : now;
+      const start = new Date(end.getTime() - spanMs);
+
+      for (let i = 0; i < points; i++) {
+        const p = points === 1 ? 1 : i / (points - 1);
+        const d = new Date(start.getTime() + p * spanMs);
+        result.push({ t: d, y: powerAt(d) });
+      }
+      return result;
+    }
+
+    function renderChart(targetId, series) {
+      const target = document.getElementById(targetId);
+      if (!target) return;
+
+      const width = 1000;
+      const height = 178;
+      const pad = { l: 52, r: 18, t: 10, b: 28 };
+      const plotW = width - pad.l - pad.r;
+      const plotH = height - pad.t - pad.b;
+      const values = series.map(p => p.y);
+      const rawMin = Math.min(...values);
+      const rawMax = Math.max(...values);
+      const span = Math.max(1, rawMax - rawMin);
+      const paddedMin = Math.max(0, rawMin - span * 0.18);
+      const paddedMax = rawMax + span * 0.18;
+      const scaleMin = rawMax <= 5 ? 0 : paddedMin;
+      const scaleMax = Math.max(scaleMin + 1, paddedMax);
+
+      const x = i => pad.l + (i / Math.max(1, series.length - 1)) * plotW;
+      const y = v => pad.t + plotH - ((v - scaleMin) / (scaleMax - scaleMin)) * plotH;
+
+      const line = series.map((p, i) => `${i === 0 ? "M" : "L"}${x(i).toFixed(1)},${y(p.y).toFixed(1)}`).join(" ");
+      const area = `${line} L${x(series.length - 1).toFixed(1)},${pad.t + plotH} L${pad.l},${pad.t + plotH} Z`;
+      const last = series[series.length - 1];
+      const lastX = x(series.length - 1);
+      const lastY = y(last.y);
+
+      const grid = [0, 0.5, 1].map(g => {
+        const value = scaleMin + (scaleMax - scaleMin) * g;
+        const yy = y(value);
+        return `<line class="grid-line" x1="${pad.l}" y1="${yy}" x2="${width - pad.r}" y2="${yy}"/><text class="axis-label" x="8" y="${yy + 4}">${Math.round(value)}W</text>`;
+      }).join("");
+
+      target.innerHTML = `
+        <svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="Графік сонячної генерації">
+          ${grid}
+          <path class="area" d="${area}"/>
+          <path class="line" d="${line}"/>
+          <line class="now-line" x1="${lastX}" y1="${pad.t}" x2="${lastX}" y2="${pad.t + plotH}"/>
+          <circle class="point" cx="${lastX}" cy="${lastY}" r="3.8"/>
+          <text class="axis-label" x="${pad.l}" y="${height - 8}">${formatTime(series[0].t)}</text>
+          <text class="axis-label" x="${width - 190}" y="${height - 8}">${formatTime(last.t)} · ${Math.round(last.y)}W</text>
+        </svg>
+      `;
+    }
+
+    function formatTime(date) {
+      return date.toLocaleString("uk-UA", {
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit"
+      });
+    }
+
+    function renderAll() {
+      Object.entries(chartDefs).forEach(([id, def]) => {
+        const series = makeSeries(def.minutes, def.points, def.history);
+        renderChart(def.el, series);
+        if (def.meta) {
+          const last = series[series.length - 1];
+          const metaElement = document.getElementById(def.meta);
+          if (metaElement) metaElement.textContent = `${formatTime(last.t)} · ${Math.round(last.y)} W`;
+        }
+      });
+
+      const current = powerAt(now);
+      const voltage = current > 0 ? 28.4 + 1.2 * Math.sin(now.getTime() / 1000 / 290) : 0;
+      const currentA = voltage > 0 ? current / voltage : 0;
+      const clouds = Math.round((1 - clamp((cloudFactor(now) - 0.34) / 0.70, 0, 1)) * 70 + 20);
+      const temp = 21 + Math.round(4 * Math.sin(now.getHours() / 24 * Math.PI));
+      const weather = weatherState(now, clouds);
+      const sunrise = "05:08";
+      const sunset = "20:23";
+
+      document.getElementById("currentPower").innerHTML = `${Math.round(current)} <span class="unit">W</span>`;
+      document.getElementById("currentVoltage").innerHTML = `${voltage.toFixed(1)} <span class="unit">V</span>`;
+      document.getElementById("currentCurrent").innerHTML = `${currentA.toFixed(1)} <span class="unit">A</span>`;
+      document.getElementById("headerTemp").textContent = `Температура: ${temp}°C`;
+      document.getElementById("headerClouds").textContent = `Хмарність: ${clouds}%`;
+      document.getElementById("weatherIcon").innerHTML = weather.icon;
+      document.getElementById("sunriseText").innerHTML = `${sunriseIcon()} ${sunrise}`;
+      document.getElementById("sunsetText").innerHTML = `${sunsetIcon()} ${sunset}`;
+      document.getElementById("weatherWidget").title = `Погода: ${weather.label}. Хмарність: ${clouds}%. Температура: ${temp}°C. Схід сонця: ${sunrise}. Захід сонця: ${sunset}.`;
+
+      const scroll = document.getElementById("previewBody");
+      const last3hCard = document.querySelector('[data-chart-card="last3h"]');
+      if (scroll && last3hCard && scroll.scrollTop === 0) scroll.scrollTop = last3hCard.offsetTop - scroll.offsetTop;
+    }
+
+    function weatherState(date, clouds) {
+      const hour = date.getHours();
+      const isNight = hour < 5 || hour >= 21;
+      if (isNight) return { label: "ясна ніч", icon: moonIcon() };
+      if (clouds >= 75) return { label: "хмарно", icon: cloudIcon() };
+      if (clouds >= 45) return { label: "мінлива хмарність", icon: partlyCloudyIcon() };
+      return { label: "ясно", icon: sunIcon() };
+    }
+
+    function sunIcon() {
+      return `<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="4.5" stroke="currentColor" stroke-width="2"/><path d="M12 2v3M12 19v3M4.93 4.93l2.12 2.12M16.95 16.95l2.12 2.12M2 12h3M19 12h3M4.93 19.07l2.12-2.12M16.95 7.05l2.12-2.12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`;
+    }
+
+    function moonIcon() {
+      return `<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M20.2 14.4A7.7 7.7 0 0 1 9.6 3.8a8.7 8.7 0 1 0 10.6 10.6Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>`;
+    }
+
+    function cloudIcon() {
+      return `<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M7.5 18h9.2a4.3 4.3 0 0 0 .2-8.6A6.1 6.1 0 0 0 5.2 11.2 3.5 3.5 0 0 0 7.5 18Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+    }
+
+    function partlyCloudyIcon() {
+      return `<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="8" cy="8" r="3.2" stroke="currentColor" stroke-width="2"/><path d="M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2M3.6 3.6 5 5M11 11l1.4 1.4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><path d="M9 19h8a3.7 3.7 0 0 0 .1-7.4 5.2 5.2 0 0 0-9.9 1.3A3.1 3.1 0 0 0 9 19Z" fill="var(--yellow)" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>`;
+    }
+
+    function sunriseIcon() {
+      return `<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M3 18h18M6 15a6 6 0 0 1 12 0M12 3v7M8.5 6.5 12 3l3.5 3.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+    }
+
+    function sunsetIcon() {
+      return `<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M3 18h18M6 15a6 6 0 0 1 12 0M12 10V3M8.5 6.5 12 10l3.5-3.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+    }
+
+    document.getElementById("historyToggle").addEventListener("click", () => {
+      const panel = document.getElementById("historyPanel");
+      const button = document.getElementById("historyToggle");
+      const isActive = panel.classList.toggle("active");
+      button.classList.toggle("expanded", isActive);
+      button.setAttribute("aria-expanded", String(isActive));
+      if (isActive) {
+        renderChart("chart-history", makeSeries(chartDefs.history.minutes, chartDefs.history.points, true));
+        panel.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    });
+
+    document.getElementById("expandCardToggle").addEventListener("click", () => {
+      const card = document.getElementById("solarCard");
+      const button = document.getElementById("expandCardToggle");
+      const isExpanded = card.classList.toggle("expanded");
+      button.setAttribute("aria-expanded", String(isExpanded));
+      setTimeout(renderAll, 220);
+    });
+
+    renderAll();
+  </script>
+</body>
+</html>
