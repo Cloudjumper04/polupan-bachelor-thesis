@@ -21,6 +21,7 @@ OPEN_METEO_SOURCE = "open-meteo-archive"
 OPEN_METEO_FORECAST_SOURCE = "open_meteo_forecast"
 
 HOURLY_VARIABLES = [
+    "temperature_2m",
     "cloud_cover",
     "precipitation",
     "rain",
@@ -59,6 +60,7 @@ class WeatherObservationData:
     shortwave_radiation_w_m2: float | None
     direct_radiation_w_m2: float | None
     diffuse_radiation_w_m2: float | None
+    temperature_c: float | None = None
     source: str = OPEN_METEO_SOURCE
 
 
@@ -74,6 +76,7 @@ class WeatherForecastData:
     shortwave_radiation_w_m2: float | None
     direct_radiation_w_m2: float | None
     diffuse_radiation_w_m2: float | None
+    temperature_c: float | None = None
     source: str = OPEN_METEO_FORECAST_SOURCE
     resolution_minutes: int = 60
 
@@ -304,6 +307,9 @@ def _parse_open_meteo_hourly_response(
                 timestamp_utc=timestamp_local.astimezone(timezone.utc),
                 timestamp_local=timestamp_local,
                 weather_code=_optional_int(values_by_variable["weather_code"][index]),
+                temperature_c=_optional_float(
+                    values_by_variable["temperature_2m"][index]
+                ),
                 cloud_cover_percent=_optional_float(
                     values_by_variable["cloud_cover"][index]
                 ),
@@ -364,6 +370,9 @@ def _parse_open_meteo_forecast_response(
                 ),
                 forecast_timestamp_local=forecast_timestamp_local,
                 weather_code=_optional_int(values_by_variable["weather_code"][index]),
+                temperature_c=_optional_float(
+                    values_by_variable["temperature_2m"][index]
+                ),
                 cloud_cover_percent=_optional_float(
                     values_by_variable["cloud_cover"][index]
                 ),

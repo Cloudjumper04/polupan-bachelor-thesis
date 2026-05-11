@@ -108,6 +108,7 @@ def test_fetch_open_meteo_historical_weather_parses_mocked_response(
     payload = {
         "hourly": {
             "time": ["2026-01-01T00:00", "2026-01-01T01:00"],
+            "temperature_2m": [4.5, 6.2],
             "cloud_cover": [10, 80],
             "precipitation": [0.0, 1.2],
             "rain": [0.0, 1.0],
@@ -150,6 +151,7 @@ def test_fetch_open_meteo_historical_weather_parses_mocked_response(
     assert observations[0].timestamp_local.isoformat() == "2026-01-01T00:00:00+02:00"
     assert observations[0].timestamp_utc.isoformat() == "2025-12-31T22:00:00+00:00"
     assert observations[1].weather_code == 61
+    assert observations[1].temperature_c == 6.2
     assert observations[1].cloud_cover_percent == 80.0
     assert observations[1].rain_mm == 1.0
     assert observations[1].source == weather.OPEN_METEO_SOURCE
@@ -161,6 +163,7 @@ def test_fetch_open_meteo_forecast_parses_mocked_response(
     payload = {
         "hourly": {
             "time": ["2026-01-01T00:00", "2026-01-01T01:00", "2026-01-01T02:00"],
+            "temperature_2m": [4.5, 5.0, 6.2],
             "cloud_cover": [10, 50, 80],
             "precipitation": [0.0, 0.1, 1.2],
             "rain": [0.0, 0.0, 1.0],
@@ -208,6 +211,7 @@ def test_fetch_open_meteo_forecast_parses_mocked_response(
         "2025-12-31T22:00:00+00:00"
     )
     assert forecasts[2].weather_code == 61
+    assert forecasts[2].temperature_c == 6.2
     assert forecasts[2].cloud_cover_percent == 80.0
     assert forecasts[2].source == OPEN_METEO_FORECAST_SOURCE
     assert forecasts[2].resolution_minutes == 60

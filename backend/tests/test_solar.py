@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -92,6 +92,90 @@ def test_ideal_generation_uses_station_timezone_for_naive_inputs(
     assert point.timestamp_local.isoformat() == "2026-01-01T00:00:00+02:00"
     assert point.timestamp_utc.tzinfo == timezone.utc
     assert point.timestamp_utc.isoformat() == "2025-12-31T22:00:00+00:00"
+
+
+def test_ideal_generation_uses_kyiv_summer_offset(
+    generator: IdealSolarGenerator,
+) -> None:
+    points = generator.generate(
+        datetime(2026, 5, 11, 0, 0),
+        datetime(2026, 5, 11, 0, 15),
+        15,
+    )
+
+    point = points[0]
+    assert point.timestamp_local.isoformat() == "2026-05-11T00:00:00+03:00"
+    assert point.timestamp_utc.isoformat() == "2026-05-10T21:00:00+00:00"
+
+
+def test_ideal_generation_starts_around_local_sunrise_not_one_hour_early(
+    generator: IdealSolarGenerator,
+) -> None:
+    station_timezone = ZoneInfo("Europe/Kyiv")
+    points = generator.generate(
+        datetime(2026, 5, 11, 4, 30, tzinfo=station_timezone),
+        datetime(2026, 5, 11, 6, 30, tzinfo=station_timezone),
+        15,
+    )
+
+    first_positive = next(point for point in points if point.ideal_power_w > 0)
+
+    assert first_positive.timestamp_local.isoformat() == "2026-05-11T05:30:00+03:00"
+    assert all(
+        point.ideal_power_w == 0.0
+        for point in points
+        if point.timestamp_local < datetime(2026, 5, 11, 5, 30, tzinfo=station_timezone)
+    )
+
+
+def test_ideal_generation_handles_kyiv_dst_spring_forward_explicitly(
+    generator: IdealSolarGenerator,
+) -> None:
+    station_timezone = ZoneInfo("Europe/Kyiv")
+    points = generator.generate(
+        datetime(2026, 3, 29, 0, 0, tzinfo=station_timezone),
+        datetime(2026, 3, 30, 0, 0, tzinfo=station_timezone),
+        15,
+    )
+
+    assert len(points) == 23 * 4
+    assert points[0].timestamp_local.isoformat() == "2026-03-29T00:00:00+02:00"
+    assert points[-1].timestamp_local.isoformat() == "2026-03-29T23:45:00+03:00"
+    assert not any(point.timestamp_local.hour == 3 for point in points)
+    assert all(
+        right.timestamp_utc - left.timestamp_utc == timedelta(minutes=15)
+        for left, right in zip(points, points[1:])
+    )
+
+
+def test_ideal_generation_handles_kyiv_dst_fall_back_explicitly(
+    generator: IdealSolarGenerator,
+) -> None:
+    station_timezone = ZoneInfo("Europe/Kyiv")
+    points = generator.generate(
+        datetime(2026, 10, 25, 0, 0, tzinfo=station_timezone),
+        datetime(2026, 10, 26, 0, 0, tzinfo=station_timezone),
+        15,
+    )
+    repeated_three_oclock = [
+        point
+        for point in points
+        if point.timestamp_local.hour == 3
+    ]
+
+    assert len(points) == 25 * 4
+    assert points[0].timestamp_local.isoformat() == "2026-10-25T00:00:00+03:00"
+    assert points[-1].timestamp_local.isoformat() == "2026-10-25T23:45:00+02:00"
+    assert len(repeated_three_oclock) == 8
+    assert {point.timestamp_local.utcoffset() for point in repeated_three_oclock} == {
+        timedelta(hours=2),
+        timedelta(hours=3),
+    }
+    assert len({point.timestamp_utc for point in points}) == len(points)
+    assert all(
+        right.timestamp_utc - left.timestamp_utc == timedelta(minutes=15)
+        for left, right in zip(points, points[1:])
+    )
 
 
 def test_ideal_generation_produces_positive_power_during_daytime(

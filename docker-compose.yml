@@ -1,4 +1,38 @@
 services:
+  backend-api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: smartenergy-backend-api
+    volumes:
+      - ./backend/data:/app/backend/data
+      - ./backend/config:/app/backend/config:ro
+    ports:
+      - "6001:6001"
+    command:
+      - uvicorn
+      - app.main:app
+      - --app-dir
+      - backend
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "6001"
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    container_name: smartenergy-frontend
+    environment:
+      VITE_API_PROXY_TARGET: http://backend-api:6001
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend-api
+    restart: unless-stopped
+
   weather-scheduler:
     build:
       context: .

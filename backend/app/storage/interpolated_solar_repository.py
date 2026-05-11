@@ -92,6 +92,110 @@ def list_interpolated_solar_for_config(
     return list(session.exec(statement).all())
 
 
+def list_interpolated_solar_resolutions_for_config(
+    session: Session,
+    station_id: str,
+    config_hash: str,
+    start_utc: datetime | None = None,
+    end_utc: datetime | None = None,
+) -> list[int]:
+    statement = (
+        select(InterpolatedSolarProduction.resolution_seconds)
+        .where(InterpolatedSolarProduction.station_id == station_id)
+        .where(InterpolatedSolarProduction.config_hash == config_hash)
+        .distinct()
+    )
+    if start_utc is not None:
+        statement = statement.where(InterpolatedSolarProduction.timestamp_utc >= start_utc)
+    if end_utc is not None:
+        statement = statement.where(InterpolatedSolarProduction.timestamp_utc < end_utc)
+    return sorted(session.exec(statement).all())
+
+
+def has_interpolated_solar_resolution_for_config(
+    session: Session,
+    station_id: str,
+    config_hash: str,
+    resolution_seconds: int,
+) -> bool:
+    statement = (
+        select(InterpolatedSolarProduction.id)
+        .where(InterpolatedSolarProduction.station_id == station_id)
+        .where(InterpolatedSolarProduction.config_hash == config_hash)
+        .where(InterpolatedSolarProduction.resolution_seconds == resolution_seconds)
+        .limit(1)
+    )
+    return session.exec(statement).first() is not None
+
+
+def get_latest_interpolated_solar_for_config(
+    session: Session,
+    station_id: str,
+    config_hash: str,
+    at_or_before_utc: datetime | None = None,
+    resolution_seconds: int | None = None,
+) -> InterpolatedSolarProduction | None:
+    statement = (
+        select(InterpolatedSolarProduction)
+        .where(InterpolatedSolarProduction.station_id == station_id)
+        .where(InterpolatedSolarProduction.config_hash == config_hash)
+        .order_by(InterpolatedSolarProduction.timestamp_utc.desc())
+        .limit(1)
+    )
+    if at_or_before_utc is not None:
+        statement = statement.where(
+            InterpolatedSolarProduction.timestamp_utc <= at_or_before_utc
+        )
+    if resolution_seconds is not None:
+        statement = statement.where(
+            InterpolatedSolarProduction.resolution_seconds == resolution_seconds
+        )
+    return session.exec(statement).first()
+
+
+def get_nearest_interpolated_solar_for_config(
+    session: Session,
+    station_id: str,
+    config_hash: str,
+    target_utc: datetime,
+    resolution_seconds: int | None = None,
+) -> InterpolatedSolarProduction | None:
+    before_statement = (
+        select(InterpolatedSolarProduction)
+        .where(InterpolatedSolarProduction.station_id == station_id)
+        .where(InterpolatedSolarProduction.config_hash == config_hash)
+        .where(InterpolatedSolarProduction.timestamp_utc <= target_utc)
+        .order_by(InterpolatedSolarProduction.timestamp_utc.desc())
+        .limit(1)
+    )
+    after_statement = (
+        select(InterpolatedSolarProduction)
+        .where(InterpolatedSolarProduction.station_id == station_id)
+        .where(InterpolatedSolarProduction.config_hash == config_hash)
+        .where(InterpolatedSolarProduction.timestamp_utc >= target_utc)
+        .order_by(InterpolatedSolarProduction.timestamp_utc)
+        .limit(1)
+    )
+    if resolution_seconds is not None:
+        before_statement = before_statement.where(
+            InterpolatedSolarProduction.resolution_seconds == resolution_seconds
+        )
+        after_statement = after_statement.where(
+            InterpolatedSolarProduction.resolution_seconds == resolution_seconds
+        )
+
+    before = session.exec(before_statement).first()
+    after = session.exec(after_statement).first()
+    if before is None:
+        return after
+    if after is None:
+        return before
+
+    before_delta = abs((target_utc - before.timestamp_utc).total_seconds())
+    after_delta = abs((after.timestamp_utc - target_utc).total_seconds())
+    return before if before_delta <= after_delta else after
+
+
 def get_interpolated_solar_range(
     session: Session,
     station_id: str,

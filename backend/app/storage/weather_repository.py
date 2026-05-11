@@ -16,6 +16,7 @@ class WeatherObservation(SQLModel, table=True):
     )
     timestamp_local: datetime = Field(sa_column=Column(TimezoneAwareDateTime()))
     weather_code: int | None = None
+    temperature_c: float | None = None
     cloud_cover_percent: float | None = None
     precipitation_mm: float | None = None
     rain_mm: float | None = None

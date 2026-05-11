@@ -117,6 +117,7 @@ def test_script_processes_mocked_forecast_data_in_temp_database(
 
     assert len(rows) == 2
     assert rows[0].forecast_timestamp_utc.isoformat() == "2026-05-09T10:00:00+00:00"
+    assert rows[0].temperature_c == 16.5
 
 
 def _forecast_data(
@@ -127,6 +128,7 @@ def _forecast_data(
         forecast_timestamp_utc=timestamp_utc,
         forecast_timestamp_local=timestamp_utc.astimezone(station_timezone),
         weather_code=0,
+        temperature_c=16.5,
         cloud_cover_percent=10.0,
         precipitation_mm=0.0,
         rain_mm=0.0,

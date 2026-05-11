@@ -27,6 +27,7 @@ def test_weather_repository_saves_lists_and_deletes_observations() -> None:
         timestamp_utc=start_utc,
         timestamp_local=start_utc.astimezone(station_timezone),
         weather_code=61,
+        temperature_c=8.5,
         cloud_cover_percent=75.0,
         precipitation_mm=1.0,
         rain_mm=1.0,
@@ -48,6 +49,7 @@ def test_weather_repository_saves_lists_and_deletes_observations() -> None:
 
         assert len(saved_observations) == 1
         assert saved_observations[0].weather_code == 61
+        assert saved_observations[0].temperature_c == 8.5
         assert saved_observations[0].timestamp_utc.tzinfo == timezone.utc
         assert saved_observations[0].timestamp_local.utcoffset().total_seconds() == 7200
         assert get_weather_observation_range(
@@ -85,6 +87,7 @@ def test_weather_repository_saves_lists_and_deletes_observations() -> None:
             timestamp_utc=start_utc,
             timestamp_local=start_utc.astimezone(station_timezone),
             weather_code=61,
+            temperature_c=8.5,
             cloud_cover_percent=75.0,
             precipitation_mm=1.0,
             rain_mm=1.0,

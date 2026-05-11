@@ -19,6 +19,7 @@ class WeatherForecast(SQLModel, table=True):
     )
     forecast_timestamp_local: datetime = Field(sa_column=Column(TimezoneAwareDateTime()))
     weather_code: int | None = None
+    temperature_c: float | None = None
     cloud_cover_percent: float | None = None
     precipitation_mm: float | None = None
     rain_mm: float | None = None
@@ -58,6 +59,37 @@ def list_forecast_for_station(
     if end_utc is not None:
         statement = statement.where(WeatherForecast.forecast_timestamp_utc < end_utc)
     return list(session.exec(statement).all())
+
+
+def get_nearest_forecast_for_station(
+    session: Session,
+    station_id: str,
+    target_utc: datetime,
+) -> WeatherForecast | None:
+    before_statement = (
+        select(WeatherForecast)
+        .where(WeatherForecast.station_id == station_id)
+        .where(WeatherForecast.forecast_timestamp_utc <= target_utc)
+        .order_by(WeatherForecast.forecast_timestamp_utc.desc())
+        .limit(1)
+    )
+    after_statement = (
+        select(WeatherForecast)
+        .where(WeatherForecast.station_id == station_id)
+        .where(WeatherForecast.forecast_timestamp_utc >= target_utc)
+        .order_by(WeatherForecast.forecast_timestamp_utc)
+        .limit(1)
+    )
+    before = session.exec(before_statement).first()
+    after = session.exec(after_statement).first()
+    if before is None:
+        return after
+    if after is None:
+        return before
+
+    before_delta = abs((target_utc - before.forecast_timestamp_utc).total_seconds())
+    after_delta = abs((after.forecast_timestamp_utc - target_utc).total_seconds())
+    return before if before_delta <= after_delta else after
 
 
 def get_forecast_range(

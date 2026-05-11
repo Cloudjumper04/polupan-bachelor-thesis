@@ -42,6 +42,7 @@ def test_forecast_repository_saves_lists_latest_and_deletes_rows() -> None:
         assert len(saved_rows) == 2
         assert saved_rows[0].forecast_timestamp_utc.tzinfo == timezone.utc
         assert saved_rows[0].forecast_timestamp_local.utcoffset().total_seconds() == 10800
+        assert saved_rows[0].temperature_c == 12.5
         assert saved_rows[0].resolution_minutes == 60
         assert get_latest_forecast_fetch_time(
             session,
@@ -77,6 +78,7 @@ def _forecast_row(
         forecast_timestamp_utc=timestamp_utc,
         forecast_timestamp_local=timestamp_utc.astimezone(station_timezone),
         weather_code=3,
+        temperature_c=12.5,
         cloud_cover_percent=80.0,
         precipitation_mm=0.2,
         rain_mm=0.2,

@@ -343,7 +343,6 @@ def run_full_interpolated_solar_cache_refresh(
     engine = get_engine(database_url)
     create_db_and_tables(engine)
     with Session(engine) as session:
-        delete_interpolated_solar_for_config(session, station_id, config_hash)
         points = generate_interpolated_solar_cache_points(
             session=session,
             station_id=station_id,
@@ -352,6 +351,7 @@ def run_full_interpolated_solar_cache_refresh(
             windows=windows,
             generated_at_utc=generated_at_utc,
         )
+        delete_interpolated_solar_for_config(session, station_id, config_hash)
         save_interpolated_solar_points(session, points)
 
     return InterpolatedCacheSummary(
@@ -378,6 +378,14 @@ def run_fast_interpolated_solar_cache_refresh(
     engine = get_engine(database_url)
     create_db_and_tables(engine)
     with Session(engine) as session:
+        points = generate_interpolated_solar_cache_points(
+            session=session,
+            station_id=station_id,
+            config_hash=config_hash,
+            station_timezone=station_timezone,
+            windows=windows,
+            generated_at_utc=generated_at_utc,
+        )
         for window in windows:
             delete_interpolated_solar_for_config(
                 session,
@@ -387,14 +395,6 @@ def run_fast_interpolated_solar_cache_refresh(
                 end_utc=window.end_utc,
                 resolution_seconds=window.resolution_seconds,
             )
-        points = generate_interpolated_solar_cache_points(
-            session=session,
-            station_id=station_id,
-            config_hash=config_hash,
-            station_timezone=station_timezone,
-            windows=windows,
-            generated_at_utc=generated_at_utc,
-        )
         save_interpolated_solar_points(session, points)
 
     return InterpolatedCacheSummary(

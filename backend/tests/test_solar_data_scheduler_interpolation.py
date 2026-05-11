@@ -137,7 +137,7 @@ def test_cache_generator_avoids_duplicate_boundary_timestamps(
     assert {row.resolution_seconds for row in rows} == {5}
 
 
-def test_default_interpolation_windows_have_expected_row_count() -> None:
+def test_default_interpolation_windows_are_tier_exclusive() -> None:
     now = datetime(2026, 5, 10, 12, 0, tzinfo=timezone.utc)
     windows = solar_data_scheduler.build_default_interpolation_windows(now)
 
@@ -156,6 +156,18 @@ def test_default_interpolation_windows_have_expected_row_count() -> None:
         5,
     ]
     assert row_count == 10728
+    assert [(window.start_utc, window.end_utc) for window in windows] == [
+        (now - timedelta(days=7), now - timedelta(hours=24)),
+        (now - timedelta(hours=24), now - timedelta(hours=12)),
+        (now - timedelta(hours=12), now - timedelta(hours=3)),
+        (now - timedelta(hours=3), now - timedelta(minutes=30)),
+        (now - timedelta(minutes=30), now + timedelta(minutes=30)),
+        (now + timedelta(minutes=30), now + timedelta(hours=3)),
+    ]
+    assert all(
+        current.end_utc <= following.start_utc
+        for current, following in zip(windows, windows[1:])
+    )
 
 
 def test_missing_historical_bracketing_data_raises_clear_error(tmp_path: Path) -> None:
@@ -232,6 +244,24 @@ def test_fast_cache_refresh_deletes_only_near_now_one_second_rows(
                     config_hash=config_hash,
                 ),
                 _cache_row(
+                    near_start + timedelta(seconds=10),
+                    resolution_seconds=30,
+                    power_w=30.0,
+                    config_hash=config_hash,
+                ),
+                _cache_row(
+                    near_start + timedelta(seconds=10),
+                    resolution_seconds=60,
+                    power_w=60.0,
+                    config_hash=config_hash,
+                ),
+                _cache_row(
+                    near_start + timedelta(seconds=10),
+                    resolution_seconds=300,
+                    power_w=300.0,
+                    config_hash=config_hash,
+                ),
+                _cache_row(
                     near_start - timedelta(hours=1),
                     resolution_seconds=1,
                     power_w=9.0,
@@ -259,6 +289,15 @@ def test_fast_cache_refresh_deletes_only_near_now_one_second_rows(
             config_hash,
             resolution_seconds=5,
         )
+        preserved_non_fast_rows = {
+            resolution: list_interpolated_solar_for_config(
+                session,
+                STATION_ID,
+                config_hash,
+                resolution_seconds=resolution,
+            )
+            for resolution in (30, 60, 300)
+        }
 
     assert summary.fast_only is True
     assert summary.rows == 3600
@@ -271,6 +310,10 @@ def test_fast_cache_refresh_deletes_only_near_now_one_second_rows(
     ) == 3600
     assert any(row.power_w == 9.0 for row in one_second_rows)
     assert [row.power_w for row in five_second_rows] == [5.0]
+    assert {
+        resolution: [row.power_w for row in rows]
+        for resolution, rows in preserved_non_fast_rows.items()
+    } == {30: [30.0], 60: [60.0], 300: [300.0]}
 
 
 def test_full_cache_refresh_rebuilds_all_configured_windows(
@@ -285,13 +328,33 @@ def test_full_cache_refresh_rebuilds_all_configured_windows(
     windows = [
         solar_data_scheduler.InterpolationWindow(
             start_utc=now,
-            end_utc=now + timedelta(seconds=10),
+            end_utc=now + timedelta(minutes=10),
+            resolution_seconds=300,
+        ),
+        solar_data_scheduler.InterpolationWindow(
+            start_utc=now + timedelta(minutes=10),
+            end_utc=now + timedelta(minutes=12),
+            resolution_seconds=60,
+        ),
+        solar_data_scheduler.InterpolationWindow(
+            start_utc=now + timedelta(minutes=12),
+            end_utc=now + timedelta(minutes=13),
+            resolution_seconds=30,
+        ),
+        solar_data_scheduler.InterpolationWindow(
+            start_utc=now + timedelta(minutes=13),
+            end_utc=now + timedelta(minutes=13, seconds=10),
             resolution_seconds=5,
         ),
         solar_data_scheduler.InterpolationWindow(
-            start_utc=now + timedelta(seconds=10),
-            end_utc=now + timedelta(seconds=20),
+            start_utc=now + timedelta(minutes=13, seconds=10),
+            end_utc=now + timedelta(minutes=13, seconds=20),
             resolution_seconds=1,
+        ),
+        solar_data_scheduler.InterpolationWindow(
+            start_utc=now + timedelta(minutes=13, seconds=20),
+            end_utc=now + timedelta(minutes=13, seconds=30),
+            resolution_seconds=5,
         ),
     ]
     monkeypatch.setattr(
@@ -304,7 +367,7 @@ def test_full_cache_refresh_rebuilds_all_configured_windows(
         _save_forecast_source_range(
             session,
             now,
-            now + timedelta(minutes=15),
+            now + timedelta(minutes=30),
             config_hash=config_hash,
         )
         save_interpolated_solar_points(
@@ -327,13 +390,27 @@ def test_full_cache_refresh_rebuilds_all_configured_windows(
 
     with Session(engine) as session:
         rows = list_interpolated_solar_for_config(session, STATION_ID, config_hash)
+        rows_by_resolution = {
+            resolution: list_interpolated_solar_for_config(
+                session,
+                STATION_ID,
+                config_hash,
+                resolution_seconds=resolution,
+            )
+            for resolution in (1, 5, 30, 60, 300)
+        }
 
     assert summary.fast_only is False
-    assert summary.rows == 12
-    assert summary.windows == 2
-    assert len(rows) == 12
+    assert summary.rows == 20
+    assert summary.windows == 6
+    assert len(rows) == 20
     assert all(row.power_w != 99.0 for row in rows)
-    assert {row.resolution_seconds for row in rows} == {1, 5}
+    assert {row.resolution_seconds for row in rows} == {1, 5, 30, 60, 300}
+    assert {
+        resolution: len(resolution_rows)
+        for resolution, resolution_rows in rows_by_resolution.items()
+    } == {1: 10, 5: 4, 30: 2, 60: 2, 300: 2}
+    assert len({row.timestamp_utc for row in rows}) == len(rows)
 
 
 def test_scheduler_startup_runs_stable_maintenance_then_full_cache() -> None:

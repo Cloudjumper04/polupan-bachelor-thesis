@@ -319,6 +319,8 @@ def test_cli_works_with_mocked_fetches_against_temp_sqlite(
 
     assert len(observation_rows) == 24
     assert len(forecast_rows) == 72
+    assert observation_rows[0].temperature_c == 9.5
+    assert forecast_rows[0].temperature_c == 16.5
 
 
 def _database_url(tmp_path: Path) -> str:
@@ -414,6 +416,7 @@ def _historical_data(
             timestamp_utc=local_time.astimezone(timezone.utc),
             timestamp_local=local_time,
             weather_code=0,
+            temperature_c=9.5,
             cloud_cover_percent=10.0,
             precipitation_mm=0.0,
             rain_mm=0.0,
@@ -435,6 +438,7 @@ def _forecast_data(
             forecast_timestamp_utc=local_time.astimezone(timezone.utc),
             forecast_timestamp_local=local_time,
             weather_code=1,
+            temperature_c=16.5,
             cloud_cover_percent=30.0,
             precipitation_mm=0.0,
             rain_mm=0.0,
@@ -457,6 +461,7 @@ def _historical_rows(
             timestamp_utc=local_time.astimezone(timezone.utc),
             timestamp_local=local_time,
             weather_code=0,
+            temperature_c=9.5,
             cloud_cover_percent=10.0,
             precipitation_mm=0.0,
             rain_mm=0.0,
@@ -481,6 +486,7 @@ def _forecast_row(
         forecast_timestamp_utc=local_time.astimezone(timezone.utc),
         forecast_timestamp_local=local_time,
         weather_code=1,
+        temperature_c=16.5,
         cloud_cover_percent=30.0,
         precipitation_mm=0.0,
         rain_mm=0.0,

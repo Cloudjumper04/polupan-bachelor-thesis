@@ -143,6 +143,7 @@ def _to_db_rows(
             forecast_timestamp_utc=forecast.forecast_timestamp_utc,
             forecast_timestamp_local=forecast.forecast_timestamp_local,
             weather_code=forecast.weather_code,
+            temperature_c=forecast.temperature_c,
             cloud_cover_percent=forecast.cloud_cover_percent,
             precipitation_mm=forecast.precipitation_mm,
             rain_mm=forecast.rain_mm,
