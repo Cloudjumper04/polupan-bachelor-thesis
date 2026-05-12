@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import pytest
 from sqlmodel import Session
 
 from app.config_loader import calculate_config_hash, load_config
@@ -114,16 +115,28 @@ def test_solar_current_buffer_endpoint_returns_bounded_points_without_charts(
     payload = get_solar_current_buffer(now=now, seconds=60)
 
     assert "charts" not in payload
-    assert payload["current"] == {
-        "timestamp_local": now.astimezone(STATION_TIMEZONE).isoformat(),
-        "solar_power_w": 100.0,
-    }
+    assert payload["current"]["timestamp_local"] == now.astimezone(
+        STATION_TIMEZONE
+    ).isoformat()
+    assert payload["current"]["solar_power_w"] == 100.0
+    assert payload["current"]["pv_voltage_v"] == pytest.approx(66.0, abs=0.8)
+    assert payload["current"]["pv_current_a"] == pytest.approx(
+        100.0 / payload["current"]["pv_voltage_v"]
+    )
     assert len(payload["points"]) <= 61
     assert payload["points"][0]["solar_power_w"] == 100.0
-    assert payload["points"][-1]["solar_power_w"] == 160.0
-    assert {"timestamp_utc", "timestamp_local", "solar_power_w"} <= set(
-        payload["points"][0]
+    assert payload["points"][0]["pv_voltage_v"] == pytest.approx(66.0, abs=0.8)
+    assert payload["points"][0]["pv_current_a"] == pytest.approx(
+        100.0 / payload["points"][0]["pv_voltage_v"]
     )
+    assert payload["points"][-1]["solar_power_w"] == 160.0
+    assert {
+        "timestamp_utc",
+        "timestamp_local",
+        "solar_power_w",
+        "pv_voltage_v",
+        "pv_current_a",
+    } <= set(payload["points"][0])
 
 
 def test_solar_weather_current_endpoint_returns_compact_weather_payload(
@@ -314,8 +327,10 @@ def test_solar_dashboard_endpoint_returns_chart_ready_payload(
     assert payload["station"]["name"] == "SmartEnergy Lab"
     assert payload["station"]["timezone"] == "Europe/Kyiv"
     assert payload["current"]["solar_power_w"] == 123.4
-    assert payload["current"]["voltage_v"] == 29.1
-    assert payload["current"]["current_a"] == 0.1
+    assert payload["current"]["pv_voltage_v"] == pytest.approx(66.0, abs=0.8)
+    assert payload["current"]["pv_current_a"] == pytest.approx(
+        123.4 / payload["current"]["pv_voltage_v"]
+    )
     assert payload["weather"]["cloud_cover_percent"] == 45.0
     assert payload["weather"]["weather_code"] == 2
     assert payload["weather"]["weather_state"] == "partly_cloudy"
@@ -432,6 +447,77 @@ def test_solar_dashboard_charts_return_reduced_visual_cadence_series(
         assert {point["resolution_seconds"] for point in chart["points"]} == {
             spec["visual_resolution"]
         }
+
+
+def test_solar_dashboard_preserves_expected_source_tiers_for_live_charts(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config = load_config(CONFIG_PATH)
+    config_hash = calculate_config_hash(config)
+    database_url = f"sqlite:///{tmp_path / 'source-tiers.db'}"
+    now = datetime(2026, 5, 10, 12, 0, tzinfo=timezone.utc)
+    engine = get_engine(database_url)
+    create_db_and_tables(engine)
+
+    with Session(engine) as session:
+        save_interpolated_solar_points(
+            session,
+            [
+                _interpolated_row(
+                    now - timedelta(days=6),
+                    config_hash,
+                    power_w=300.0,
+                    resolution_seconds=300,
+                ),
+                _interpolated_row(
+                    now - timedelta(hours=20),
+                    config_hash,
+                    power_w=60.0,
+                    resolution_seconds=60,
+                ),
+                _interpolated_row(
+                    now - timedelta(hours=10),
+                    config_hash,
+                    power_w=30.0,
+                    resolution_seconds=30,
+                ),
+                _interpolated_row(
+                    now - timedelta(hours=2),
+                    config_hash,
+                    power_w=5.0,
+                    resolution_seconds=5,
+                ),
+                _interpolated_row(
+                    now - timedelta(minutes=20),
+                    config_hash,
+                    power_w=1.0,
+                    resolution_seconds=1,
+                ),
+                _interpolated_row(
+                    now,
+                    config_hash,
+                    power_w=2.0,
+                    resolution_seconds=1,
+                ),
+            ],
+        )
+
+    monkeypatch.setenv("SMARTENERGY_DATABASE_URL", database_url)
+    monkeypatch.setenv("SMARTENERGY_CONFIG_PATH", str(CONFIG_PATH))
+
+    payload = get_solar_dashboard(now=now)
+
+    assert {
+        chart_id: chart["metadata"]["source_resolutions_used"]
+        for chart_id, chart in payload["charts"].items()
+    } == {
+        "last30m": [1],
+        "last3h": [5, 1],
+        "last12h": [30, 5, 1],
+        "last24h": [60, 30, 5, 1],
+        "last7d": [300, 60, 30, 5, 1],
+    }
 
 
 def test_solar_dashboard_last24h_composes_finer_tiers_at_five_minute_cadence(

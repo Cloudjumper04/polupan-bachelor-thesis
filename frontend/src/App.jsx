@@ -205,8 +205,6 @@ export default function App() {
   const chartData = dashboard?.charts ?? {};
   const historyData = historyDataByMode[activeHistoryMode];
   const activeAppliedRange = historyAppliedRanges[activeHistoryMode];
-  const voltage = current?.voltage_v ?? 29.1;
-  const currentA = current?.current_a ?? 0.1;
 
   function updateHistoryField(field, value) {
     setHistoryClampMessage("");
@@ -411,29 +409,7 @@ export default function App() {
               </div>
               <div className="title-separator" aria-hidden="true" />
               <div className="power-summary-wrap">
-                <div className="power-summary">
-                  <div className="power-total">
-                    <div className="metric-label">Загальна потужність</div>
-                    <div className="power-value">
-                      <CurrentPowerValue fallbackPower={current?.solar_power_w} />{" "}
-                      <span className="unit">W</span>
-                    </div>
-                  </div>
-                  <div className="sub-metrics">
-                    <div className="sub-metric">
-                      <div className="metric-label">Напруга</div>
-                      <div className="value">
-                        {formatFixed(voltage)} <span className="unit">V</span>
-                      </div>
-                    </div>
-                    <div className="sub-metric">
-                      <div className="metric-label">Струм</div>
-                      <div className="value">
-                        {formatFixed(currentA)} <span className="unit">A</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
+                <CurrentOperatingSummary fallbackCurrent={current} />
               </div>
             </header>
 
@@ -620,15 +596,18 @@ function WeatherWidget({ weather }) {
   );
 }
 
-function CurrentPowerValue({ fallbackPower }) {
-  const [displayPower, setDisplayPower] = useState(fallbackPower);
+function CurrentOperatingSummary({ fallbackCurrent }) {
+  const [displayPoint, setDisplayPoint] = useState(() =>
+    normalizeCurrentPoint(fallbackCurrent),
+  );
   const bufferRef = useRef([]);
-  const fallbackPowerRef = useRef(fallbackPower);
+  const fallbackPointRef = useRef(normalizeCurrentPoint(fallbackCurrent));
 
   useEffect(() => {
-    fallbackPowerRef.current = fallbackPower;
-    setDisplayPower((currentPower) => currentPower ?? fallbackPower);
-  }, [fallbackPower]);
+    const fallbackPoint = normalizeCurrentPoint(fallbackCurrent);
+    fallbackPointRef.current = fallbackPoint;
+    setDisplayPoint((currentPoint) => currentPoint ?? fallbackPoint);
+  }, [fallbackCurrent]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -645,10 +624,12 @@ function CurrentPowerValue({ fallbackPower }) {
         const payload = await response.json();
         const points = normalizeCurrentBufferPoints(payload?.points ?? []);
         bufferRef.current = points;
-        const bufferedPower = selectBufferedPower(points, Date.now());
-        const nextPower =
-          bufferedPower ?? payload?.current?.solar_power_w ?? fallbackPowerRef.current;
-        setDisplayPower((currentPower) => nextPower ?? currentPower);
+        const bufferedPoint = selectBufferedPoint(points, Date.now());
+        const nextPoint =
+          bufferedPoint ??
+          normalizeCurrentPoint(payload?.current) ??
+          fallbackPointRef.current;
+        setDisplayPoint((currentPoint) => nextPoint ?? currentPoint);
       } catch (loadError) {
         if (loadError.name === "AbortError") return;
       }
@@ -667,15 +648,43 @@ function CurrentPowerValue({ fallbackPower }) {
 
   useEffect(() => {
     const timer = window.setInterval(() => {
-      const bufferedPower = selectBufferedPower(bufferRef.current, Date.now());
-      if (bufferedPower !== null && bufferedPower !== undefined) {
-        setDisplayPower(bufferedPower);
+      const bufferedPoint = selectBufferedPoint(bufferRef.current, Date.now());
+      if (bufferedPoint) {
+        setDisplayPoint(bufferedPoint);
       }
     }, CURRENT_DISPLAY_INTERVAL_MS);
     return () => window.clearInterval(timer);
   }, []);
 
-  return <>{formatPower(displayPower ?? fallbackPower)}</>;
+  const fallbackPoint = fallbackPointRef.current;
+  const power = displayPoint?.power ?? fallbackPoint?.power;
+  const voltage = displayPoint?.voltage ?? fallbackPoint?.voltage;
+  const current = displayPoint?.current ?? fallbackPoint?.current;
+
+  return (
+    <div className="power-summary">
+      <div className="power-total">
+        <div className="metric-label">Загальна потужність</div>
+        <div className="power-value">
+          {formatPower(power)} <span className="unit">W</span>
+        </div>
+      </div>
+      <div className="sub-metrics">
+        <div className="sub-metric">
+          <div className="metric-label">Напруга</div>
+          <div className="value">
+            {formatFixed(voltage)} <span className="unit">V</span>
+          </div>
+        </div>
+        <div className="sub-metric">
+          <div className="metric-label">Струм</div>
+          <div className="value">
+            {formatFixed(current)} <span className="unit">A</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function ChartCard({ chartId, title, chart, timezone }) {
@@ -943,26 +952,37 @@ function chartPoints(chart) {
 
 function normalizeCurrentBufferPoints(points) {
   return points
-    .map((point) => {
-      const timestamp = Date.parse(point.timestamp_utc ?? point.timestamp_local);
-      return {
-        timestamp,
-        power: Number(point.solar_power_w),
-      };
-    })
+    .map((point) => normalizeCurrentPoint(point))
     .filter(
-      (point) => !Number.isNaN(point.timestamp) && !Number.isNaN(point.power),
+      (point) => point && !Number.isNaN(point.timestamp) && point.power !== null,
     )
     .sort((left, right) => left.timestamp - right.timestamp);
 }
 
-function selectBufferedPower(points, nowMs) {
+function normalizeCurrentPoint(point) {
+  if (!point) return null;
+  const timestamp = Date.parse(point.timestamp_utc ?? point.timestamp_local);
+  return {
+    timestamp,
+    power: nullableNumber(point.solar_power_w),
+    voltage: nullableNumber(point.pv_voltage_v ?? point.voltage_v),
+    current: nullableNumber(point.pv_current_a ?? point.current_a),
+  };
+}
+
+function selectBufferedPoint(points, nowMs) {
   let selected = null;
   for (const point of points) {
     if (point.timestamp > nowMs) break;
     selected = point;
   }
-  return selected?.power ?? null;
+  return selected;
+}
+
+function nullableNumber(value) {
+  if (value === null || value === undefined) return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
 }
 
 function weatherIcon(code, state) {

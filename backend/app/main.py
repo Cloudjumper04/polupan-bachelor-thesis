@@ -15,6 +15,7 @@ from sqlmodel import Session
 
 from app.config_loader import calculate_config_hash, load_config
 from app.schemas import AppConfig
+from app.simulation.solar import estimate_pv_array_operating_point
 from app.simulation.weather import map_weather_code_to_state
 from app.storage.database import get_engine
 from app.storage.forecast_repository import get_nearest_forecast_for_station
@@ -192,7 +193,7 @@ def build_solar_dashboard_payload(
             available_end_utc,
             station_timezone,
         ),
-        "current": _current_payload(current_point, now_utc, station_timezone),
+        "current": _current_payload(current_point, now_utc, station_timezone, config),
         "weather": _weather_payload(weather_row, now_utc, config, station_timezone),
         "charts": {
             chart_id: _chart_payload(
@@ -236,7 +237,7 @@ def build_solar_current_payload(
         config_hash,
         now_utc,
     )
-    current_payload = _current_payload(current_point, now_utc, station_timezone)
+    current_payload = _current_payload(current_point, now_utc, station_timezone, config)
     return {
         "timestamp_local": current_payload["timestamp_local"],
         "solar_power_w": current_payload["solar_power_w"],
@@ -260,7 +261,7 @@ def build_solar_current_buffer_payload(
         config_hash,
         now_utc,
     )
-    current_payload = _current_payload(current_point, now_utc, station_timezone)
+    current_payload = _current_payload(current_point, now_utc, station_timezone, config)
     start_utc = _floor_utc_to_cadence(now_utc, 1)
     end_utc = start_utc + timedelta(seconds=buffer_seconds)
     rows = list_interpolated_solar_for_config(
@@ -277,11 +278,7 @@ def build_solar_current_buffer_payload(
             rows_by_timestamp[row.timestamp_utc] = row
 
     points = [
-        {
-            "timestamp_utc": timestamp.isoformat(),
-            "timestamp_local": timestamp.astimezone(station_timezone).isoformat(),
-            "solar_power_w": row.power_w,
-        }
+        _current_buffer_point_payload(timestamp, row, station_timezone, config)
         for timestamp, row in sorted(rows_by_timestamp.items())
         if start_utc <= timestamp <= end_utc
     ]
@@ -289,6 +286,8 @@ def build_solar_current_buffer_payload(
         "current": {
             "timestamp_local": current_payload["timestamp_local"],
             "solar_power_w": current_payload["solar_power_w"],
+            "pv_voltage_v": current_payload["pv_voltage_v"],
+            "pv_current_a": current_payload["pv_current_a"],
         },
         "buffer_start_local": start_utc.astimezone(station_timezone).isoformat(),
         "buffer_end_local": end_utc.astimezone(station_timezone).isoformat(),
@@ -561,17 +560,44 @@ def _current_payload(
     point: InterpolatedSolarProduction | None,
     now_utc: datetime,
     station_timezone: ZoneInfo,
+    config: AppConfig,
 ) -> dict[str, Any]:
     timestamp_local = (
-        point.timestamp_local if point is not None else now_utc.astimezone(station_timezone)
+        point.timestamp_local
+        if point is not None
+        else now_utc.astimezone(station_timezone)
+    )
+    solar_power_w = None if point is None else point.power_w
+    operating_point = (
+        None
+        if solar_power_w is None
+        else estimate_pv_array_operating_point(solar_power_w, config)
     )
     return {
         "timestamp_local": timestamp_local.isoformat(),
-        "solar_power_w": None if point is None else point.power_w,
-        # TODO: Replace fixed demo voltage with real calculation or sensor data.
-        "voltage_v": 29.1,
-        # TODO: Replace fixed demo current with real calculation or sensor data.
-        "current_a": 0.1,
+        "solar_power_w": solar_power_w,
+        "pv_voltage_v": (
+            None if operating_point is None else operating_point.voltage_v
+        ),
+        "pv_current_a": (
+            None if operating_point is None else operating_point.current_a
+        ),
+    }
+
+
+def _current_buffer_point_payload(
+    timestamp: datetime,
+    row: InterpolatedSolarProduction,
+    station_timezone: ZoneInfo,
+    config: AppConfig,
+) -> dict[str, Any]:
+    operating_point = estimate_pv_array_operating_point(row.power_w, config)
+    return {
+        "timestamp_utc": timestamp.isoformat(),
+        "timestamp_local": timestamp.astimezone(station_timezone).isoformat(),
+        "solar_power_w": row.power_w,
+        "pv_voltage_v": operating_point.voltage_v,
+        "pv_current_a": operating_point.current_a,
     }
 
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from math import cos, radians, sin
+from math import cos, isfinite, radians, sin
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -22,6 +22,63 @@ class IdealSolarPoint:
     direct_power_w: float
     ambient_power_w: float
     ideal_power_w: float
+
+
+@dataclass(frozen=True)
+class PVArrayOperatingPoint:
+    voltage_v: float
+    current_a: float
+
+
+AXIOMA_200W_OPEN_CIRCUIT_VOLTAGE_V = 35.4
+AXIOMA_200W_MAX_POWER_VOLTAGE_V = 33.0
+DEFAULT_MAX_POWER_VOLTAGE_RATIO = 0.94
+
+
+def estimate_pv_array_operating_point(
+    power_w: float,
+    config: AppConfig,
+) -> PVArrayOperatingPoint:
+    """Derive display-only PV voltage/current from simulated array power."""
+    panel_types = {panel.id: panel for panel in config.station.solar.panel_types}
+    connection_specs: list[tuple[float, float, float]] = []
+    for connection in config.station.solar.array.series_connections:
+        panel = panel_types[connection.panel_type_id]
+        series_count = connection.panels_in_series
+        connection_specs.append(
+            (
+                panel.max_power_w * series_count,
+                _panel_max_power_voltage_v(panel) * series_count,
+                _panel_open_circuit_voltage_v(panel) * series_count,
+            )
+        )
+
+    array_max_power_w = sum(max_power_w for max_power_w, _, _ in connection_specs)
+    try:
+        numeric_power_w = float(power_w)
+    except (TypeError, ValueError):
+        return PVArrayOperatingPoint(voltage_v=0.0, current_a=0.0)
+    if not isfinite(numeric_power_w) or array_max_power_w <= 0:
+        return PVArrayOperatingPoint(voltage_v=0.0, current_a=0.0)
+
+    clamped_power_w = _clamp(numeric_power_w, 0.0, array_max_power_w)
+    if clamped_power_w <= 1.0:
+        return PVArrayOperatingPoint(voltage_v=0.0, current_a=0.0)
+
+    power_ratio = clamped_power_w / array_max_power_w
+    array_vmpp_v = _weighted_connection_voltage(connection_specs, voltage_index=1)
+    array_voc_v = _weighted_connection_voltage(connection_specs, voltage_index=2)
+    voltage_factor = 0.80 + 0.20 * min(1.0, power_ratio / 0.20)
+    high_power_derate = 1.0 - 0.015 * max(0.0, power_ratio - 0.80) / 0.20
+    array_voltage_v = array_vmpp_v * voltage_factor * high_power_derate
+    array_voltage_v = _clamp(array_voltage_v, 0.0, array_voc_v * 0.98)
+    if array_voltage_v <= 0:
+        return PVArrayOperatingPoint(voltage_v=0.0, current_a=0.0)
+
+    return PVArrayOperatingPoint(
+        voltage_v=array_voltage_v,
+        current_a=clamped_power_w / array_voltage_v,
+    )
 
 
 def calculate_incidence_factor(
@@ -156,6 +213,65 @@ def _calculate_ambient_factor(sun_elevation_deg: float) -> float:
         return 0.0
     normalized_elevation = _clamp(sun_elevation_deg / 90.0, 0.0, 1.0)
     return _clamp(0.03 + 0.05 * normalized_elevation, 0.0, 0.08)
+
+
+def _panel_open_circuit_voltage_v(panel: SolarPanelType) -> float:
+    configured_voltage = _optional_positive_float(
+        getattr(panel, "open_circuit_voltage_v", None)
+    )
+    if configured_voltage is not None:
+        return configured_voltage
+    if _is_axioma_200w(panel):
+        return AXIOMA_200W_OPEN_CIRCUIT_VOLTAGE_V
+    return panel.nominal_voltage_v
+
+
+def _panel_max_power_voltage_v(panel: SolarPanelType) -> float:
+    open_circuit_voltage_v = _panel_open_circuit_voltage_v(panel)
+    configured_voltage = _optional_positive_float(
+        getattr(panel, "max_power_voltage_v", None)
+    )
+    if configured_voltage is None:
+        configured_voltage = (
+            AXIOMA_200W_MAX_POWER_VOLTAGE_V
+            if _is_axioma_200w(panel)
+            else open_circuit_voltage_v * DEFAULT_MAX_POWER_VOLTAGE_RATIO
+        )
+    return _clamp(configured_voltage, 0.0, open_circuit_voltage_v * 0.98)
+
+
+def _weighted_connection_voltage(
+    connection_specs: list[tuple[float, float, float]],
+    voltage_index: int,
+) -> float:
+    total_power_w = sum(max_power_w for max_power_w, _, _ in connection_specs)
+    if total_power_w <= 0:
+        return 0.0
+    return (
+        sum(spec[0] * spec[voltage_index] for spec in connection_specs)
+        / total_power_w
+    )
+
+
+def _optional_positive_float(value: object) -> float | None:
+    if value is None:
+        return None
+    try:
+        numeric_value = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not isfinite(numeric_value) or numeric_value <= 0:
+        return None
+    return numeric_value
+
+
+def _is_axioma_200w(panel: SolarPanelType) -> bool:
+    panel_id = panel.id.lower()
+    panel_name = panel.name.lower()
+    return (
+        ("axioma" in panel_id or "axioma" in panel_name)
+        and 190.0 <= panel.max_power_w <= 220.0
+    )
 
 
 def _as_station_time(value: datetime, station_timezone: ZoneInfo) -> datetime:

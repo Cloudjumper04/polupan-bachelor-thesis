@@ -7,7 +7,12 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from app.config_loader import load_config
-from app.simulation.solar import IdealSolarGenerator, calculate_incidence_factor
+from app.schemas import AppConfig
+from app.simulation.solar import (
+    IdealSolarGenerator,
+    calculate_incidence_factor,
+    estimate_pv_array_operating_point,
+)
 
 
 CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "station.default.yaml"
@@ -21,6 +26,103 @@ def generator() -> IdealSolarGenerator:
 def test_total_configured_solar_power_is_400w(generator: IdealSolarGenerator) -> None:
     assert generator.total_installed_power_w == 400.0
     assert generator.calculate_string_voltages()["series_1"] == 70.0
+
+
+def test_pv_operating_point_is_zero_without_power(
+    generator: IdealSolarGenerator,
+) -> None:
+    operating_point = estimate_pv_array_operating_point(0.0, generator.config)
+
+    assert operating_point.voltage_v == 0.0
+    assert operating_point.current_a == 0.0
+
+
+def test_pv_operating_point_estimates_half_array_power(
+    generator: IdealSolarGenerator,
+) -> None:
+    operating_point = estimate_pv_array_operating_point(200.0, generator.config)
+
+    assert operating_point.voltage_v == pytest.approx(66.0, abs=0.8)
+    assert operating_point.current_a == pytest.approx(200.0 / operating_point.voltage_v)
+    assert operating_point.voltage_v * operating_point.current_a == pytest.approx(200.0)
+
+
+def test_pv_operating_point_estimates_max_array_power(
+    generator: IdealSolarGenerator,
+) -> None:
+    operating_point = estimate_pv_array_operating_point(400.0, generator.config)
+
+    assert operating_point.voltage_v == pytest.approx(65.0, abs=1.0)
+    assert operating_point.current_a == pytest.approx(400.0 / operating_point.voltage_v)
+    assert operating_point.voltage_v * operating_point.current_a == pytest.approx(400.0)
+
+
+def test_pv_operating_point_series_count_doubles_voltage() -> None:
+    single_panel_config = _config_with_series_connections(
+        [
+            {
+                "id": "series_1",
+                "panel_type_id": "axioma_200w",
+                "panels_in_series": 1,
+            }
+        ]
+    )
+    two_panel_config = _config_with_series_connections(
+        [
+            {
+                "id": "series_1",
+                "panel_type_id": "axioma_200w",
+                "panels_in_series": 2,
+            }
+        ]
+    )
+
+    single_panel_point = estimate_pv_array_operating_point(100.0, single_panel_config)
+    two_panel_point = estimate_pv_array_operating_point(200.0, two_panel_config)
+
+    assert two_panel_point.voltage_v == pytest.approx(single_panel_point.voltage_v * 2)
+    assert two_panel_point.current_a == pytest.approx(single_panel_point.current_a)
+
+
+def test_pv_operating_point_parallel_strings_scale_current() -> None:
+    single_string_config = _config_with_series_connections(
+        [
+            {
+                "id": "series_1",
+                "panel_type_id": "axioma_200w",
+                "panels_in_series": 2,
+            }
+        ]
+    )
+    parallel_string_config = _config_with_series_connections(
+        [
+            {
+                "id": "series_1",
+                "panel_type_id": "axioma_200w",
+                "panels_in_series": 2,
+            },
+            {
+                "id": "series_2",
+                "panel_type_id": "axioma_200w",
+                "panels_in_series": 2,
+            },
+        ]
+    )
+
+    single_string_point = estimate_pv_array_operating_point(400.0, single_string_config)
+    parallel_string_point = estimate_pv_array_operating_point(
+        800.0,
+        parallel_string_config,
+    )
+
+    assert parallel_string_point.voltage_v == pytest.approx(single_string_point.voltage_v)
+    assert parallel_string_point.current_a == pytest.approx(
+        single_string_point.current_a * 2
+    )
+    assert (
+        parallel_string_point.voltage_v * parallel_string_point.current_a
+        == pytest.approx(800.0)
+    )
 
 
 def test_incidence_factor_returns_zero_at_night() -> None:
@@ -213,3 +315,12 @@ def test_ideal_generation_leap_year_uses_real_timestamps(
     )
 
     assert len(points) == 8784
+
+
+def _config_with_series_connections(
+    series_connections: list[dict[str, object]],
+) -> AppConfig:
+    config = load_config(CONFIG_PATH)
+    data = config.model_dump() if hasattr(config, "model_dump") else config.dict()
+    data["station"]["solar"]["array"]["series_connections"] = series_connections
+    return AppConfig(**data)
