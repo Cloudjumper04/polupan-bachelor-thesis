@@ -1,0 +1,1451 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SmartEnergy Lab — Grid Widget Mock v14</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Jura:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --yellow: #ffdd55;
+      --paper: #f3f3f1;
+      --surface: #ffffff;
+      --surface-2: #f8f8f6;
+      --black: #050505;
+      --muted: #606060;
+      --line: #d9d9d4;
+      --line-dark: #b8b8af;
+      --shadow: 0 16px 40px rgba(0, 0, 0, 0.10);
+      --radius: 16px;
+      --font: "Jura", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --cluster-gap: 14px;
+
+      --grid-bg: #ffffff;
+      --grid-bg-2: #f8f8f6;
+      --grid-border: #d9d9d4;
+      --grid-navy: #09255c;
+      --grid-navy-2: #12336f;
+      --grid-idle: #f7f7f4;
+      --green: #cfeecf;
+      --green-active: #34c94a;
+      --green-dim: #92c98f;
+      --yellow-damage: #fff4bf;
+      --orange-damage: #f8c995;
+      --red-damage: #e9a4a8;
+      --red-active: #e45460;
+      --red-dim: #d58a91;
+      --dark-red-damage: #c75f68;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: var(--font);
+      font-weight: 600;
+      color: var(--black);
+      background: var(--paper);
+    }
+
+    button, input { font: inherit; }
+    svg text { font-family: var(--font); }
+
+    .site-header,
+    .site-footer {
+      background: var(--yellow);
+      color: var(--black);
+      overflow: hidden;
+    }
+
+    .header-inner,
+    .footer-inner,
+    .page {
+      max-width: 1500px;
+      margin: 0 auto;
+      padding-left: 28px;
+      padding-right: 28px;
+    }
+
+    .header-inner {
+      height: 58px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 18px;
+      align-items: center;
+    }
+
+    .brand-title {
+      font-size: 20px;
+      font-weight: 900;
+      letter-spacing: -0.5px;
+      line-height: 1;
+      text-shadow: 0.25px 0 currentColor;
+    }
+
+    .brand-subtitle {
+      margin-top: 4px;
+      color: rgba(0,0,0,0.72);
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 760px;
+    }
+
+    .weather-widget {
+      display: flex;
+      align-items: center;
+      gap: 13px;
+      height: 42px;
+      padding: 5px 15px 5px 7px;
+      border: 1px solid rgba(255,255,255,0.16);
+      border-radius: 21px;
+      background: rgba(5,5,5,0.78);
+      color: #fff;
+      box-shadow: 0 8px 18px rgba(0,0,0,0.14);
+    }
+
+    .weather-dot {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      border: 2px solid #fff;
+      box-shadow: inset -5px -5px 0 rgba(255,255,255,0.24);
+    }
+
+    .weather-main {
+      display: grid;
+      gap: 1px;
+      min-width: 126px;
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 1.05;
+      white-space: nowrap;
+    }
+
+    .sun-times {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding-left: 12px;
+      border-left: 1px solid rgba(255,255,255,0.26);
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .page {
+      min-height: calc(100vh - 100px);
+      padding-top: 18px;
+      padding-bottom: 24px;
+    }
+
+    .main-layout {
+      width: 100%;
+      min-height: calc(100vh - 148px);
+      display: grid;
+      gap: 16px;
+      align-content: start;
+    }
+
+    .grid-card,
+    .solar-card,
+    .history-panel {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+
+    .grid-card {
+      width: min(50%, 760px);
+      min-height: 0;
+      background: var(--surface);
+      border-color: var(--line);
+      overflow: hidden;
+      position: relative;
+      display: grid;
+      grid-template-rows: auto auto;
+    }
+
+    .grid-card.expanded {
+      min-height: 505px;
+    }
+
+    .grid-main {
+      padding: 12px 16px 6px;
+      display: grid;
+      gap: 7px;
+    }
+
+    .grid-top {
+      min-height: 84px;
+      display: grid;
+      place-items: center;
+      overflow: visible;
+    }
+
+    .grid-status-cluster {
+      --status-label-row-height: clamp(26px, 2vw, 34px);
+      --switch-stack-gap: 8px;
+      --switch-pill-height: 24px;
+      --metric-label-font-size: 11px;
+      --metric-label-xheight-offset: 7px;
+      --integrity-text-gap: 2px;
+      --integrity-number-row-height: 32px;
+      --integrity-circle-size: calc((var(--metric-label-font-size) + var(--integrity-text-gap) + var(--integrity-number-row-height)) * 0.92);
+      width: 100%;
+      display: grid;
+      grid-template-columns:
+        minmax(0, 1fr)
+        max-content
+        minmax(0, 1fr)
+        max-content
+        minmax(0, 1fr)
+        max-content
+        minmax(0, 1fr);
+      column-gap: 0;
+      align-items: start;
+    }
+
+    .grid-top-divider {
+      width: 1px;
+      min-height: 62px;
+      background: rgba(0,0,0,0.12);
+      align-self: start;
+      justify-self: center;
+    }
+
+    .grid-top-tile {
+      min-height: 84px;
+      display: grid;
+      align-content: center;
+      justify-items: start;
+    }
+
+    .switch-group,
+    .integrity-status-group,
+    .voltage-group {
+      position: relative;
+      width: max-content;
+    }
+
+    .switch-group {
+      grid-column: 2;
+      display: grid;
+      grid-template-columns: auto auto;
+      column-gap: 10px;
+      align-items: center;
+      justify-content: start;
+    }
+
+    .separator-after-switch { grid-column: 3; }
+    .integrity-status-group { grid-column: 4; }
+    .separator-after-integrity { grid-column: 5; }
+    .voltage-group { grid-column: 6; }
+
+    .network-tile {
+      display: grid;
+      grid-template-columns: auto auto;
+      column-gap: 10px;
+      align-items: center;
+      justify-content: start;
+    }
+
+    .network-copy {
+      min-height: auto;
+      display: grid;
+      grid-template-rows: var(--status-label-row-height) auto;
+      align-content: start;
+      row-gap: var(--switch-stack-gap);
+      justify-items: start;
+    }
+
+    .grid-title {
+      align-self: start;
+      margin: 0;
+      font-size: clamp(26px, 2.0vw, 34px);
+      font-weight: 900;
+      letter-spacing: -0.8px;
+      line-height: 0.95;
+      text-shadow: 0.3px 0 currentColor;
+    }
+
+    .power-leds {
+      height: calc((var(--status-label-row-height) + var(--switch-stack-gap) + var(--switch-pill-height)) * 0.75);
+      display: grid;
+      grid-template-columns: 7px 7px;
+      gap: 4px;
+      align-self: center;
+      justify-self: start;
+    }
+
+    .power-state-bar {
+      width: 7px;
+      height: 100%;
+      border-radius: 999px;
+      border: 1px solid rgba(0,0,0,0.16);
+    }
+
+    .power-leds.on .power-state-bar.green { background: var(--green-active); }
+    .power-leds.on .power-state-bar.red { background: var(--red-dim); }
+    .power-leds.off .power-state-bar.green { background: var(--green-dim); }
+    .power-leds.off .power-state-bar.red { background: var(--red-active); }
+
+    .network-state-text {
+      display: grid;
+      place-items: center;
+      min-width: 58px;
+      height: var(--switch-pill-height);
+      padding: 3px 10px;
+      border: 1px solid rgba(9,37,92,0.16);
+      border-radius: 999px;
+      background: #fff;
+      color: var(--grid-navy);
+      font-size: 16px;
+      font-weight: 900;
+      line-height: 1;
+      white-space: nowrap;
+    }
+
+    .metric-label {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .grid-status-cluster .metric-label {
+      font-size: var(--metric-label-font-size);
+      line-height: 1;
+    }
+
+    .voltage-group {
+      display: grid;
+      grid-template-rows: auto auto;
+      row-gap: 2px;
+      align-content: start;
+      justify-items: start;
+      padding-top: var(--metric-label-xheight-offset);
+    }
+
+    .grid-voltage {
+      margin-top: 0;
+      font-size: clamp(34px, 2.75vw, 48px);
+      font-weight: 850;
+      letter-spacing: -1.3px;
+      line-height: 0.98;
+      color: var(--grid-navy);
+    }
+
+    .unit {
+      font-size: 13px;
+      font-weight: 650;
+      color: rgba(0,0,0,0.68);
+    }
+
+    .integrity-widget {
+      display: grid;
+      grid-template-columns: max-content var(--integrity-circle-size);
+      column-gap: 0.35em;
+      align-items: center;
+      justify-items: start;
+      text-align: left;
+    }
+
+    .integrity-copy {
+      min-height: auto;
+      display: grid;
+      grid-template-rows: auto auto;
+      align-content: start;
+      row-gap: var(--integrity-text-gap);
+      justify-items: start;
+      padding-top: var(--metric-label-xheight-offset);
+    }
+
+    .integrity-reason { display: none; }
+
+    .integrity-main-number {
+      display: flex;
+      align-items: baseline;
+      gap: 2px;
+      color: var(--black);
+      font-size: 34px;
+      font-weight: 900;
+      letter-spacing: -0.9px;
+      line-height: 0.95;
+    }
+
+    .integrity-main-number .unit {
+      color: rgba(0,0,0,0.78);
+      font-size: 15px;
+      font-weight: 850;
+    }
+
+    .integrity-circle {
+      width: var(--integrity-circle-size);
+      height: var(--integrity-circle-size);
+      margin-top: calc(var(--metric-label-xheight-offset) + var(--integrity-text-gap));
+      position: relative;
+      display: grid;
+      place-items: center;
+      cursor: help;
+    }
+
+    .integrity-ring-svg {
+      width: var(--integrity-circle-size);
+      height: var(--integrity-circle-size);
+      position: absolute;
+      inset: 0;
+      overflow: visible;
+    }
+
+    .integrity-ring-bg {
+      fill: none;
+      stroke: rgba(0,0,0,0.08);
+      stroke-width: 9;
+      stroke-linecap: round;
+    }
+
+    .integrity-ring-value {
+      fill: none;
+      stroke: var(--integrity-color);
+      stroke-width: 9;
+      stroke-linecap: round;
+      transform: rotate(-90deg);
+      transform-origin: 56px 56px;
+    }
+
+    .integrity-number {
+      position: relative;
+      z-index: 2;
+      display: flex;
+      align-items: baseline;
+      justify-content: center;
+      gap: 1px;
+      color: var(--black);
+      font-size: 25px;
+      font-weight: 900;
+      letter-spacing: -0.8px;
+      line-height: 1;
+      width: 100%;
+      text-align: center;
+    }
+
+    .integrity-number .unit {
+      color: rgba(0,0,0,0.78);
+      font-size: 11px;
+      font-weight: 850;
+    }
+
+    .blackout-state {
+      width: 72px;
+      height: 72px;
+      margin-top: 4px;
+      display: grid;
+      place-items: center;
+      font-size: 21px;
+      font-weight: 900;
+      letter-spacing: -0.4px;
+      color: #050505;
+    }
+
+    .blackout-state.inline {
+      width: auto;
+      height: auto;
+      margin-top: 0;
+      display: block;
+      font-size: 26px;
+      line-height: 0.95;
+    }
+
+    .schedule-panel {
+      padding: 9px 11px 8px;
+      border: 1px solid rgba(9,37,92,0.16);
+      border-radius: 13px;
+      background: #fff;
+    }
+
+    .schedule-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 8px;
+    }
+
+    .schedule-title-block {
+      display: grid;
+      gap: 2px;
+    }
+
+    .schedule-title {
+      font-size: 14px;
+      font-weight: 850;
+      text-shadow: 0.16px 0 currentColor;
+    }
+
+    .schedule-meta {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .slot-wrap {
+      position: relative;
+      padding-bottom: 17px;
+    }
+
+    .slot-grid {
+      display: grid;
+      grid-template-columns: repeat(24, minmax(8px, 1fr));
+      gap: 2px;
+      height: 35px;
+      position: relative;
+    }
+
+    .hour-slot {
+      position: relative;
+      border-radius: 3px;
+      background: var(--grid-idle);
+      border: 1px solid rgba(0,0,0,0.05);
+      overflow: hidden;
+    }
+
+    .hour-slot.off-full {
+      background: var(--grid-navy);
+      cursor: help;
+    }
+
+    .hour-slot.off-left,
+    .hour-slot.off-right { cursor: help; }
+
+    .hour-slot.off-left::before,
+    .hour-slot.off-right::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 50%;
+      background: var(--grid-navy);
+    }
+
+    .hour-slot.off-left::before { left: 0; }
+    .hour-slot.off-right::before { right: 0; }
+
+    .hour-slot:hover { outline: 2px solid rgba(9,37,92,0.24); outline-offset: 1px; }
+
+    .time-marker {
+      position: absolute;
+      top: -5px;
+      bottom: 15px;
+      width: 2px;
+      background: #050505;
+      transform: translateX(-1px);
+      z-index: 4;
+      box-shadow: 0 0 0 2px rgba(255,255,255,0.75);
+    }
+
+    .time-marker::before {
+      content: "";
+      position: absolute;
+      top: -5px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #050505;
+    }
+
+    .time-labels {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: 10px;
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 750;
+      line-height: 1;
+    }
+
+    .time-labels span {
+      position: absolute;
+      bottom: 0;
+      transform: translateX(0);
+      text-align: left;
+    }
+
+    .time-labels span.end-label {
+      transform: translateX(-100%);
+      text-align: right;
+    }
+
+
+    .grid-expand-button {
+      justify-self: end;
+      margin: 0 12px 10px 0;
+      width: 26px;
+      height: 22px;
+      display: grid;
+      place-items: center;
+      border: 0;
+      background: transparent;
+      color: var(--black);
+      cursor: pointer;
+      padding: 0;
+    }
+
+    .grid-expand-button svg {
+      width: 18px;
+      height: 18px;
+      background: transparent;
+      border: 0;
+      border-radius: 0;
+      transition: transform 140ms ease;
+    }
+
+    .grid-card.expanded .grid-expand-button svg { transform: rotate(180deg); }
+
+    .grid-expanded {
+      display: none;
+      padding: 0 14px 14px;
+    }
+
+    .grid-card.expanded .grid-expanded { display: grid; }
+
+    .expanded-chart-panel {
+      min-height: 292px;
+      border: 1px solid rgba(9,37,92,0.16);
+      border-radius: 13px;
+      background: #fff;
+      overflow: hidden;
+      display: grid;
+      grid-template-rows: 38px minmax(0, 1fr) auto;
+    }
+
+    .expanded-chart-head {
+      position: relative;
+      display: grid;
+      grid-template-columns: 42px minmax(0, 1fr) 42px;
+      align-items: center;
+      border-bottom: 1px solid rgba(9,37,92,0.12);
+      background: #fff;
+    }
+
+    .chart-select-button {
+      border: 0;
+      background: transparent;
+      height: 100%;
+      cursor: pointer;
+      color: var(--black);
+      font-weight: 900;
+      font-size: 18px;
+    }
+
+    .chart-select-button:hover { background: rgba(9,37,92,0.07); }
+
+    .week-side-button {
+      position: absolute;
+      top: 50%;
+      z-index: 5;
+      width: 28px;
+      height: 58px;
+      display: grid;
+      place-items: center;
+      transform: translateY(-50%);
+      border: 0;
+      background: transparent;
+      color: rgba(0,0,0,0.76);
+      cursor: pointer;
+      font-size: 26px;
+      font-weight: 900;
+      line-height: 1;
+    }
+
+    .week-side-button.left { left: 3px; }
+    .week-side-button.right { right: 3px; }
+    .week-side-button:hover { color: var(--grid-navy); }
+
+    .week-side-button:disabled {
+      color: rgba(0,0,0,0.22);
+      cursor: default;
+    }
+
+    .selected-chart-title {
+      text-align: center;
+      font-size: 15px;
+      font-weight: 900;
+      letter-spacing: -0.15px;
+    }
+
+    .chart-footer {
+      min-height: 30px;
+      display: flex;
+      align-items: center;
+      justify-content: flex-start;
+      padding: 0 12px 9px;
+      background: #fff;
+    }
+
+    .view-history-link {
+      border: 0;
+      background: transparent;
+      color: rgba(0,0,0,0.66);
+      font-size: 11px;
+      font-weight: 800;
+      cursor: pointer;
+      padding: 0;
+      text-decoration: underline;
+      text-underline-offset: 3px;
+    }
+
+    .history-inline {
+      display: none;
+      gap: 8px;
+      align-items: end;
+      padding: 8px 10px;
+      border-top: 1px solid rgba(9,37,92,0.10);
+      background: #fff;
+    }
+
+    .history-inline.active { display: grid; grid-template-columns: 1fr 1fr auto; }
+
+    .field { display: grid; gap: 4px; }
+    .field span {
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+    .field input {
+      width: 100%;
+      border: 1px solid rgba(9,37,92,0.20);
+      border-radius: 8px;
+      padding: 7px 8px;
+      font-size: 12px;
+      background: #fff;
+    }
+    .show-button {
+      border: 1px solid rgba(9,37,92,0.20);
+      border-radius: 8px;
+      background: var(--grid-navy);
+      color: #fff;
+      padding: 8px 11px;
+      font-size: 12px;
+      font-weight: 850;
+      cursor: pointer;
+    }
+
+    .chart-body { min-height: 0; padding: 8px 10px; position: relative; display: grid; background: #fff; }
+
+    .chart-svg {
+      width: 100%;
+      height: 100%;
+      min-height: 205px;
+      display: block;
+      background: #fff;
+      border: 1px solid #eeeeea;
+      border-radius: 8px;
+    }
+
+    .axis-label { fill: #575757; font-size: 13px; font-weight: 650; }
+    .date-under-label { fill: rgba(0,0,0,0.52); font-size: 12px; font-weight: 750; }
+    .chart-grid-line { stroke: rgba(0,0,0,0.12); stroke-width: 1; }
+    .blue-area { fill: rgba(9,37,92,0.10); }
+    .blue-line { fill: none; stroke: var(--grid-navy); stroke-width: 2.6; stroke-linejoin: round; stroke-linecap: round; }
+    .blue-point { fill: var(--grid-bg); stroke: var(--grid-navy); stroke-width: 1.8; }
+    .bar-rect { fill: var(--grid-navy); }
+    .bar-muted { fill: rgba(9,37,92,0.22); }
+
+    .week-schedule-table {
+      height: 100%;
+      min-height: 230px;
+      display: grid;
+      grid-template-columns: 34px repeat(24, minmax(14px, 1fr));
+      grid-template-rows: 28px repeat(7, minmax(24px, 1fr));
+      border: 1px solid rgba(9,37,92,0.15);
+      border-radius: 9px;
+      overflow: hidden;
+      background: #fff;
+    }
+
+    .week-cell,
+    .day-label,
+    .hour-label {
+      border-right: 1px solid rgba(9,37,92,0.11);
+      border-bottom: 1px solid rgba(9,37,92,0.11);
+    }
+
+    .day-label,
+    .hour-label {
+      display: grid;
+      place-items: center;
+      color: rgba(0,0,0,0.62);
+      font-size: 11px;
+      font-weight: 800;
+      background: rgba(241,242,239,0.70);
+    }
+
+    .hour-label { writing-mode: vertical-rl; transform: rotate(180deg); }
+
+    .week-cell { background: #fff; }
+    .week-cell.off { background: var(--grid-navy); }
+    .week-cell.predicted { box-shadow: inset 0 0 0 999px rgba(255,255,255,0.10); }
+    .week-cell.now { outline: 2px solid #050505; outline-offset: -2px; }
+
+    .week-queue-label {
+      position: absolute;
+      top: 9px;
+      right: 48px;
+      min-width: 42px;
+      height: 24px;
+      display: grid;
+      place-items: center;
+      border: 1px solid rgba(9,37,92,0.16);
+      border-radius: 999px;
+      background: #fff;
+      color: var(--grid-navy);
+      font-size: 14px;
+      font-weight: 900;
+      line-height: 1;
+    }
+
+    .prediction-note { display: none; }
+
+    .solar-card {
+      width: min(50%, 760px);
+      height: 56vh;
+      min-height: 500px;
+      display: grid;
+      grid-template-rows: 112px minmax(0, 1fr) 34px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .solar-card-head {
+      height: 112px;
+      padding: 14px 52px 14px 18px;
+      display: grid;
+      grid-template-columns: minmax(160px, 0.72fr) 1px minmax(230px, 1fr);
+      gap: 18px;
+      align-items: center;
+      background: var(--surface-2);
+      border-bottom: 1px solid var(--line);
+      overflow: hidden;
+    }
+
+    .solar-title {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      min-width: 0;
+      text-align: center;
+    }
+
+    .solar-title h1 {
+      margin: 0;
+      font-size: clamp(23px, 2.05vw, 32px);
+      font-weight: 900;
+      line-height: 0.96;
+      letter-spacing: -0.8px;
+      text-shadow: 0.35px 0 currentColor;
+    }
+
+    .title-separator {
+      width: 1px;
+      height: 68px;
+      background: var(--line-dark);
+    }
+
+    .power-summary-wrap {
+      display: flex;
+      align-items: center;
+      min-width: 0;
+      height: 100%;
+      padding: 0 12px;
+    }
+
+    .power-summary {
+      display: grid;
+      grid-template-rows: auto auto;
+      align-content: center;
+      gap: 7px;
+      width: min(300px, 100%);
+      min-width: 0;
+    }
+
+    .power-total {
+      padding-bottom: 6px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .power-value {
+      margin-top: 1px;
+      font-size: 28px;
+      font-weight: 800;
+      letter-spacing: -0.6px;
+      line-height: 1;
+    }
+
+    .sub-metrics {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 9px;
+      width: 100%;
+      min-width: 0;
+    }
+
+    .sub-metric .value {
+      margin-top: 2px;
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: -0.2px;
+      white-space: nowrap;
+    }
+
+    .solar-chart-box {
+      margin: 10px 12px 0;
+      min-height: 0;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: white;
+      overflow: hidden;
+      display: grid;
+    }
+
+    .solar-chart-card {
+      min-height: 245px;
+      margin: 8px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--surface-2);
+      overflow: hidden;
+      display: grid;
+      grid-template-rows: 32px 1fr;
+    }
+
+    .solar-chart-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 0 8px;
+      border-bottom: 1px solid #ecece7;
+      background: white;
+    }
+
+    .solar-chart-title {
+      font-size: 14px;
+      font-weight: 800;
+      text-shadow: 0.18px 0 currentColor;
+    }
+
+    .solar-chart-meta {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .solar-card-foot {
+      height: 34px;
+      padding: 6px 13px 9px;
+      display: flex;
+      justify-content: flex-end;
+      align-items: center;
+    }
+
+    .history-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      border: 0;
+      background: transparent;
+      color: var(--black);
+      font-family: var(--font);
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      padding: 0;
+    }
+
+    .history-link svg,
+    .grid-expand-button svg { background: transparent; border: 0; border-radius: 0; }
+
+    .site-footer {
+      height: 42px;
+      border-top: 1px solid rgba(0,0,0,0.12);
+    }
+
+    .footer-inner { height: 42px; }
+
+    @media (max-width: 1240px) {
+      .grid-card, .solar-card { width: min(62%, 760px); }
+    }
+
+    @media (max-width: 1100px) {
+      .grid-card, .solar-card { width: 70%; }
+    }
+
+    @media (max-width: 900px) {
+      .header-widgets { display: none; }
+      .header-inner { grid-template-columns: minmax(0, 1fr); }
+      .grid-card, .solar-card { width: 100%; }
+      .grid-status-cluster { --cluster-gap: 10px; }
+      .grid-top { overflow: visible; }
+      .integrity-widget { grid-template-columns: max-content var(--integrity-circle-size); column-gap: 0.35em; }
+      .history-inline.active { grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 720px) {
+      .header-inner,
+      .footer-inner,
+      .page { padding-left: 14px; padding-right: 14px; }
+      .grid-card { min-height: 0; }
+      .grid-main { padding: 10px 11px 5px; }
+      .grid-status-cluster { --cluster-gap: 6px; --status-label-row-height: 24px; --switch-stack-gap: 7px; --switch-pill-height: 22px; --metric-label-font-size: 10px; --metric-label-xheight-offset: 5px; --integrity-number-row-height: 27px; }
+      .grid-title { font-size: 24px; }
+      .network-state-text { min-width: 50px; font-size: 14px; padding: 3px 8px; }
+      .network-tile { grid-template-columns: auto auto; column-gap: 8px; }
+      .switch-group { column-gap: 8px; }
+      .power-leds { grid-template-columns: 7px 7px; gap: 4px; }
+      .power-state-bar { width: 7px; }
+      .integrity-main-number { font-size: 28px; }
+      .integrity-widget { grid-template-columns: max-content var(--integrity-circle-size); column-gap: 0.35em; }
+      .schedule-panel { padding: 8px 9px 7px; }
+      .solar-card { height: auto; min-height: 0; grid-template-rows: 112px minmax(360px, 1fr) 34px; }
+      .solar-card-head { grid-template-columns: minmax(124px, 0.75fr) 1px minmax(190px, 1fr); gap: 10px; padding: 12px 42px 12px 14px; }
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <script type="text/babel">
+    const { useMemo, useState } = React;
+
+    const now = new Date("2026-01-14T13:26:00+02:00");
+    const gridNow = {
+      voltage: 218,
+      queue: "3.1",
+      effectiveHealth: 36,
+      actualHealth: 36.0,
+      deficit: 64.0,
+      outageHours: 15.0,
+      lightHours: 9.0,
+      reason: "generation bottleneck after accumulated winter infrastructure damage",
+      nextOutage: "14:00–17:30",
+    };
+
+    const outageWindows = [
+      [0, 3.5], [5.5, 9.5], [14, 17.5], [20, 24]
+    ];
+
+    const chartNames = ["Сумарний час відключень", "Цілісність мережі", "Графік відключень"];
+    const weekData = [
+      { day: "Пн", date: "12.01", outage: 11.5, health: 52, blocks: [[0,2.5],[6,9],[13,16],[20,24]] },
+      { day: "Вт", date: "13.01", outage: 11.0, health: 54, blocks: [[2,4.5],[8,11],[16,19],[22,24]] },
+      { day: "Ср", date: "14.01", outage: 15.0, health: 36, blocks: outageWindows, current: true },
+      { day: "Чт", date: "15.01", outage: 14.5, health: 40, blocks: [[0,4],[7,10.5],[13,17],[20,23]], predicted: true },
+      { day: "Пт", date: "16.01", outage: 13.5, health: 43, blocks: [[1,4.5],[8,11],[14,18],[21,24]], predicted: true },
+      { day: "Сб", date: "17.01", outage: 13.5, health: 45, blocks: [[0,3],[6,9],[12,15.5],[19,23]], predicted: true },
+      { day: "Нд", date: "18.01", outage: 14.0, health: 41, blocks: [[2,5.5],[8,12],[15,18.5],[21,24]], predicted: true },
+    ];
+
+    function App() {
+      const [gridExpanded, setGridExpanded] = useState(false);
+      const [chartIndex, setChartIndex] = useState(0);
+      const [weekOffset, setWeekOffset] = useState(0);
+      const [historyOpen, setHistoryOpen] = useState(false);
+      const chartName = chartNames[chartIndex];
+      const showHistory = chartIndex === 0 || chartIndex === 1;
+
+      return (
+        <>
+          <header className="site-header">
+            <div className="header-inner">
+              <div>
+                <div className="brand-title">SmartEnergy Lab</div>
+                <div className="brand-subtitle">Програмний модуль автоматизації режимів зарядки акумуляторних батарей</div>
+              </div>
+              <div className="header-widgets">
+                <div className="weather-widget" title="Погода: мінлива хмарність">
+                  <div className="weather-dot" />
+                  <div className="weather-main">
+                    <div>Хмарність: 42%</div>
+                    <div>Температура: -2°C</div>
+                  </div>
+                  <div className="sun-times"><span>↗ 07:49</span><span>↘ 16:23</span></div>
+                </div>
+              </div>
+            </div>
+          </header>
+
+          <main className="page">
+            <section className="main-layout">
+              <GridWidget
+                expanded={gridExpanded}
+                onToggle={() => setGridExpanded(v => !v)}
+                chartIndex={chartIndex}
+                setChartIndex={setChartIndex}
+                chartName={chartName}
+                weekOffset={weekOffset}
+                setWeekOffset={setWeekOffset}
+                historyOpen={historyOpen}
+                setHistoryOpen={setHistoryOpen}
+                showHistory={showHistory}
+              />
+              <SolarWidget />
+            </section>
+          </main>
+
+          <footer className="site-footer"><div className="footer-inner" /></footer>
+        </>
+      );
+    }
+
+    function GridWidget({ expanded, onToggle, chartIndex, setChartIndex, chartName, weekOffset, setWeekOffset, historyOpen, setHistoryOpen, showHistory }) {
+      const integrity = Math.min(100, Math.max(0, gridNow.effectiveHealth));
+      const isBlackout = gridNow.lightHours < 1 || integrity <= 0;
+      const integrityClass = integrityFillClass(integrity);
+      return (
+        <section className={`grid-card ${expanded ? "expanded" : ""}`}>
+          <div className="grid-main">
+            <div className="grid-top">
+              <div className="grid-status-cluster">
+                <div className="switch-group network-tile">
+                  <div className="network-copy">
+                    <h1 className="grid-title">Мережа</h1>
+                    <div className="network-state-text">Увімк.</div>
+                  </div>
+                  <div className="power-leds on" title="Мережа доступна">
+                    <span className="power-state-bar green" aria-hidden="true" />
+                    <span className="power-state-bar red" aria-hidden="true" />
+                  </div>
+                </div>
+
+                <div className="grid-top-divider separator-after-switch" />
+
+                <div className="integrity-status-group integrity-widget" title={isBlackout ? "Повний blackout: менше однієї години світла за добу" : `Фактична цілісність: ${gridNow.actualHealth.toFixed(1)}%. Причина: ${gridNow.reason}`}>
+                  <div className="integrity-copy integrity-text-stack">
+                    <div className="metric-label">Цілісність мережі</div>
+                    {isBlackout ? (
+                      <div className="blackout-state inline">Blackout</div>
+                    ) : (
+                      <div className="integrity-main-number">{integrity.toFixed(0)}<span className="unit">%</span></div>
+                    )}
+                  </div>
+                  {!isBlackout && <IntegrityCircle value={integrity} colorClass={integrityClass} showNumber={false} />}
+                </div>
+
+                <div className="grid-top-divider separator-after-integrity" />
+
+                <div className="voltage-group">
+                  <div className="metric-label">Напруга</div>
+                  <div className="grid-voltage">{gridNow.voltage}<span className="unit"> V</span></div>
+                </div>
+              </div>
+            </div>
+
+            <ScheduleStrip />
+          </div>
+
+          <button className="grid-expand-button" type="button" onClick={onToggle} aria-label="Розгорнути графіки мережі" aria-expanded={expanded}>
+            <InlineIcon svg={chevronIcon()} />
+          </button>
+
+          <section className="grid-expanded">
+            <div className="expanded-chart-panel">
+              <div className="expanded-chart-head">
+                <button className="chart-select-button" type="button" onClick={() => setChartIndex((chartIndex + chartNames.length - 1) % chartNames.length)}>‹</button>
+                <div className="selected-chart-title">{chartName}</div>
+                <button className="chart-select-button" type="button" onClick={() => setChartIndex((chartIndex + 1) % chartNames.length)}>›</button>
+              </div>
+
+              <div className="chart-body">
+                {chartIndex === 0 && <OutageHoursChart />}
+                {chartIndex === 1 && <IntegrityChart />}
+                {chartIndex === 2 && <div className="week-queue-label" title={`Черга ${gridNow.queue}`}>{gridNow.queue}</div>}
+                {chartIndex === 2 && <WeekScheduleTable />}
+              </div>
+
+              <div className="chart-footer">
+                {showHistory && <button className="view-history-link" type="button" onClick={() => setHistoryOpen(v => !v)}>переглянути історію</button>}
+              </div>
+
+              <div className={`history-inline ${historyOpen && showHistory ? "active" : ""}`}>
+                <label className="field"><span>Від</span><input type="datetime-local" defaultValue="2025-11-01T00:00" /></label>
+                <label className="field"><span>До</span><input type="datetime-local" defaultValue="2026-05-20T23:59" /></label>
+                <button className="show-button" type="button" title="Для періодів понад 14 днів стовпчиковий графік переходить у лінійний; до 600 точок із відповідною агрегацією.">Показати</button>
+              </div>
+            </div>
+          </section>
+        </section>
+      );
+    }
+
+    function PowerState({ isOn }) {
+      return (
+        <div className={`power-state ${isOn ? "on" : "off"}`} title={isOn ? "Мережа доступна" : "Мережа недоступна"}>
+          <span className="power-state-bar green" aria-hidden="true" />
+          <span className="power-state-bar red" aria-hidden="true" />
+          <span className="power-state-text">{isOn ? "Увімк." : "Вимк."}</span>
+        </div>
+      );
+    }
+
+    function IntegrityCircle({ value, colorClass, showNumber = true }) {
+      const radius = 45;
+      const circumference = 2 * Math.PI * radius;
+      const offset = circumference * (1 - value / 100);
+      const color = integrityColor(colorClass);
+      return (
+        <div className="integrity-circle" style={{ "--integrity-color": color }}>
+          <svg className="integrity-ring-svg" viewBox="0 0 112 112" aria-hidden="true">
+            <circle className="integrity-ring-bg" cx="56" cy="56" r={radius} />
+            <circle
+              className="integrity-ring-value"
+              cx="56"
+              cy="56"
+              r={radius}
+              strokeDasharray={`${circumference} ${circumference}`}
+              strokeDashoffset={offset}
+            />
+          </svg>
+          {showNumber && <div className="integrity-number">{value.toFixed(0)}<span className="unit">%</span></div>}
+        </div>
+      );
+    }
+
+    function ScheduleStrip() {
+      const hourSlots = Array.from({ length: 24 }, (_, hour) => {
+        const state = hourOffState(hour, outageWindows);
+        const title = state === "idle" ? `${pad(hour)}:00–${pad(hour + 1)}:00 · світло є` : outageTooltipForHour(hour, outageWindows);
+        return <div key={hour} className={`hour-slot ${state}`} title={title} />;
+      });
+      const currentLeft = ((13 + 26 / 60) / 24) * 100;
+      return (
+        <section className="schedule-panel">
+          <div className="schedule-head">
+            <div className="schedule-title-block">
+              <div className="schedule-title">Графік відключень на сьогодні</div>
+              <div className="schedule-meta">поточний час 13:26</div>
+            </div>
+            <div className="schedule-meta">наступне {gridNow.nextOutage}</div>
+          </div>
+          <div className="slot-wrap">
+            <div className="slot-grid">
+              {hourSlots}
+            </div>
+            <div className="time-marker" style={{ left: `${currentLeft}%` }} title="Поточний час 13:26" />
+            <div className="time-labels">{[0,2,4,6,8,10,12,14,16,18,20,22,24].map(v => <span key={v} className={v === 24 ? "end-label" : ""} style={{ left: `${(v / 24) * 100}%` }}>{v}</span>)}</div>
+          </div>
+        </section>
+      );
+    }
+
+    function OutageHoursChart() {
+      const data = weekData.map(d => ({ x: d.day, date: d.date, y: d.outage, predicted: d.predicted }));
+      return <BarChart data={data} max={16} unit="год" />;
+    }
+
+    function IntegrityChart() {
+      const data = weekData.map(d => ({ x: d.day, date: d.date, y: d.health, predicted: d.predicted }));
+      return <LineChart data={data} max={100} unit="%" />;
+    }
+
+    function WeekScheduleTable() {
+      const hours = Array.from({ length: 24 }, (_, i) => i);
+      return (
+        <div className="week-schedule-table">
+          <div className="hour-label" />
+          {hours.map(h => <div key={`h${h}`} className="hour-label">{pad(h)}</div>)}
+          {weekData.map((day, row) => [
+            <div key={`${day.day}-label`} className="day-label">{day.day}</div>,
+            ...hours.map(hour => {
+              const off = hourOffState(hour, day.blocks) !== "idle";
+              const current = day.current && hour === 13;
+              return <div key={`${row}-${hour}`} className={`week-cell ${off ? "off" : ""} ${day.predicted ? "predicted" : ""} ${current ? "now" : ""}`} title={`${day.day} ${pad(hour)}:00–${pad(hour+1)}:00 ${off ? "можливе відключення" : "світло є"}`} />;
+            })
+          ])}
+        </div>
+      );
+    }
+
+    function SolarWidget() {
+      return (
+        <section className="solar-card">
+          <header className="solar-card-head">
+            <div className="solar-title"><h1>Сонячна <br/>генерація</h1></div>
+            <div className="title-separator" />
+            <div className="power-summary-wrap">
+              <div className="power-summary">
+                <div className="power-total">
+                  <div className="metric-label">Загальна потужність</div>
+                  <div className="power-value">286 <span className="unit">W</span></div>
+                </div>
+                <div className="sub-metrics">
+                  <div className="sub-metric"><div className="metric-label">Напруга</div><div className="value">29.1 <span className="unit">V</span></div></div>
+                  <div className="sub-metric"><div className="metric-label">Струм</div><div className="value">9.8 <span className="unit">A</span></div></div>
+                </div>
+              </div>
+            </div>
+          </header>
+          <section className="solar-chart-box">
+            <article className="solar-chart-card">
+              <div className="solar-chart-head"><div className="solar-chart-title">Останні 3 години</div><div className="solar-chart-meta">13:30 · 286 W</div></div>
+              <div className="chart-body"><SolarChart /></div>
+            </article>
+          </section>
+          <footer className="solar-card-foot"><button className="history-link" type="button">історія генерації <InlineIcon svg={chevronIcon()} /></button></footer>
+        </section>
+      );
+    }
+
+    function BarChart({ data, max, unit }) {
+      const width = 1000, height = 258, padL = 48, padR = 20, padT = 16, padB = 56;
+      const plotW = width - padL - padR, plotH = height - padT - padB;
+      const step = plotW / data.length;
+      const barW = step * 0.58;
+      return (
+        <svg className="chart-svg" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">
+          {[0,0.5,1].map((g,i) => {
+            const y = padT + plotH - g * plotH;
+            const label = Math.round(max * g);
+            return <g key={i}><line className="chart-grid-line" x1={padL} y1={y} x2={width-padR} y2={y}/><text className="axis-label" x="8" y={y+4}>{label}{unit}</text></g>;
+          })}
+          {data.map((p,i) => {
+            const x = padL + i * step + (step - barW) / 2;
+            const h = (p.y / max) * plotH;
+            const y = padT + plotH - h;
+            const centerX = x + barW / 2;
+            const showDate = i === 0 || i === data.length - 1;
+            return <g key={p.x}>
+              {!p.predicted && <rect className="bar-rect" x={x} y={y} width={barW} height={h} rx="5"/>}
+              <text className="axis-label" textAnchor="middle" x={centerX} y={height-33}>{p.x}</text>
+              {showDate && <text className="axis-label date-under-label" textAnchor="middle" x={centerX} y={height-13}>{p.date}</text>}
+            </g>;
+          })}
+        </svg>
+      );
+    }
+
+    function LineChart({ data, max, unit }) {
+      const width = 1000, height = 258, padL = 48, padR = 20, padT = 16, padB = 56;
+      const plotW = width - padL - padR, plotH = height - padT - padB;
+      const x = i => padL + (i / (data.length - 1)) * plotW;
+      const y = v => padT + plotH - (v / max) * plotH;
+      const actual = data.map((p, i) => ({ ...p, i })).filter(p => !p.predicted);
+      const path = actual.map((p,idx) => `${idx === 0 ? "M" : "L"}${x(p.i).toFixed(1)},${y(p.y).toFixed(1)}`).join(" ");
+      const area = actual.length ? `${path} L${x(actual[actual.length-1].i).toFixed(1)},${padT+plotH} L${x(actual[0].i).toFixed(1)},${padT+plotH} Z` : "";
+      return (
+        <svg className="chart-svg" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">
+          {[0,0.5,1].map((g,i) => {
+            const yy = padT + plotH - g * plotH;
+            const label = Math.round(max * g);
+            return <g key={i}><line className="chart-grid-line" x1={padL} y1={yy} x2={width-padR} y2={yy}/><text className="axis-label" x="8" y={yy+4}>{label}{unit}</text></g>;
+          })}
+          {actual.length > 1 && <path className="blue-area" d={area}/>}
+          {actual.length > 1 && <path className="blue-line" d={path}/>}
+          {actual.map(p => <circle key={p.x} className="blue-point" cx={x(p.i)} cy={y(p.y)} r="4"/>)}
+          {data.map((p,i) => {
+            const showDate = i === 0 || i === data.length - 1;
+            return <g key={p.x}>
+              <text className="axis-label" textAnchor="middle" x={x(i)} y={height-33}>{p.x}</text>
+              {showDate && <text className="axis-label date-under-label" textAnchor="middle" x={x(i)} y={height-13}>{p.date}</text>}
+            </g>;
+          })}
+        </svg>
+      );
+    }
+
+    function SolarChart() {
+      const width = 1000, height = 250, padL = 48, padR = 20, padT = 16, padB = 32;
+      const points = Array.from({ length: 90 }, (_, i) => {
+        const p = i / 89;
+        const y = Math.max(0, Math.sin(p * Math.PI * 0.95 + 0.1) * 310 + 12 * Math.sin(i/2));
+        return y;
+      });
+      const max = 360;
+      const plotW = width - padL - padR, plotH = height - padT - padB;
+      const x = i => padL + (i / (points.length - 1)) * plotW;
+      const y = v => padT + plotH - (v / max) * plotH;
+      const path = points.map((v,i) => `${i === 0 ? "M" : "L"}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+      const area = `${path} L${x(points.length-1).toFixed(1)},${padT+plotH} L${padL},${padT+plotH} Z`;
+      return <svg className="chart-svg" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none"><path d={area} fill="rgba(255,221,85,0.42)"/><path d={path} fill="none" stroke="#050505" strokeWidth="2.3" strokeLinecap="round"/><text className="axis-label" x="8" y="28">360W</text><text className="axis-label" x="8" y="220">0W</text><text className="axis-label" x={padL} y="238">10:30</text><text className="axis-label" x="850" y="238">13:30 · 286W</text></svg>;
+    }
+
+
+    function reasonUk(reason) {
+      const value = String(reason || "").toLowerCase();
+      if (value.includes("generation") && value.includes("delivery")) return "комбіноване обмеження генерації та доставки";
+      if (value.includes("generation")) return "обмеження генерації";
+      if (value.includes("delivery")) return "обмеження доставки";
+      if (value.includes("recovery")) return "відновлення після пошкоджень";
+      if (value.includes("no active")) return "активних пошкоджень немає";
+      return "обмеження енергосистеми";
+    }
+
+    function integrityFillClass(value) {
+      if (value >= 99.5) return "green";
+      if (value >= 80) return "yellow";
+      if (value >= 60) return "orange";
+      return "red";
+    }
+
+    function integrityColor(value) {
+      if (value === "green") return "#cfeecf";
+      if (value === "yellow") return "#fff4bf";
+      if (value === "orange") return "#f8c995";
+      return "#e9a4a8";
+    }
+
+    function hourOffState(hour, windows) {
+      const left = windows.some(([s,e]) => s <= hour && e >= hour + 0.5);
+      const right = windows.some(([s,e]) => s <= hour + 0.5 && e >= hour + 1);
+      if (left && right) return "off-full";
+      if (left) return "off-left";
+      if (right) return "off-right";
+      return "idle";
+    }
+
+    function outageTooltipForHour(hour, windows) {
+      const matching = windows.find(([s,e]) => e > hour && s < hour + 1);
+      if (!matching) return `${pad(hour)}:00–${pad(hour+1)}:00 · світло є`;
+      return `можливе відключення ${formatHour(matching[0])}–${formatHour(matching[1])}`;
+    }
+
+    function formatHour(v) {
+      const h = Math.floor(v);
+      const m = Math.round((v - h) * 60);
+      return `${pad(h)}:${pad(m)}`;
+    }
+
+    function pad(v) { return String(Math.floor(v)).padStart(2, "0"); }
+
+    function InlineIcon({ svg }) {
+      return <span dangerouslySetInnerHTML={{ __html: svg }} />;
+    }
+
+    function chevronIcon() {
+      return `<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m7 10 5 5 5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>

@@ -29,6 +29,8 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import GridWidget from "./components/GridWidget";
+import { useStationClock } from "./hooks/useStationClock";
 
 const CHARTS = [
   ["last30m", "Останні 30 хвилин"],
@@ -152,7 +154,7 @@ export default function App() {
     initialScrollDone.current = true;
   }, [dashboard]);
 
-  const stationTimezone = dashboard?.station?.timezone;
+  const stationTimezone = dashboard?.station?.timezone ?? "Europe/Kyiv";
 
   useEffect(() => {
     const controller = new AbortController();
@@ -387,6 +389,8 @@ export default function App() {
 
       <main className="page">
         <section className="main-layout">
+          <GridWidget stationTimezone={stationTimezone} />
+
           <section className={`solar-card${expanded ? " expanded" : ""}`}>
             <button
               className="expand-card-button"
@@ -409,7 +413,10 @@ export default function App() {
               </div>
               <div className="title-separator" aria-hidden="true" />
               <div className="power-summary-wrap">
-                <CurrentOperatingSummary fallbackCurrent={current} />
+                <CurrentOperatingSummary
+                  fallbackCurrent={current}
+                  stationTimezone={stationTimezone}
+                />
               </div>
             </header>
 
@@ -596,7 +603,8 @@ function WeatherWidget({ weather }) {
   );
 }
 
-function CurrentOperatingSummary({ fallbackCurrent }) {
+function CurrentOperatingSummary({ fallbackCurrent, stationTimezone }) {
+  const stationClock = useStationClock(stationTimezone);
   const [displayPoint, setDisplayPoint] = useState(() =>
     normalizeCurrentPoint(fallbackCurrent),
   );
@@ -660,11 +668,12 @@ function CurrentOperatingSummary({ fallbackCurrent }) {
   const power = displayPoint?.power ?? fallbackPoint?.power;
   const voltage = displayPoint?.voltage ?? fallbackPoint?.voltage;
   const current = displayPoint?.current ?? fallbackPoint?.current;
+  const currentTimeLabel = stationClock?.timeLabel ?? "--:--";
 
   return (
     <div className="power-summary">
       <div className="power-total">
-        <div className="metric-label">Загальна потужність</div>
+        <div className="metric-label">Загальна потужність · {currentTimeLabel}</div>
         <div className="power-value">
           {formatPower(power)} <span className="unit">W</span>
         </div>
