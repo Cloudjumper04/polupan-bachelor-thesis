@@ -43,11 +43,31 @@ class SolarConfig(BaseModel):
     installation: SolarInstallationConfig
 
 
+class GridConfig(BaseModel):
+    base_delivery_health_percent: float = Field(default=130.0, ge=0, le=200)
+    base_generation_health_percent: float = Field(default=130.0, ge=0, le=200)
+    regeneration_cap_percent: float = Field(default=150.0, ge=0, le=200)
+    minimum_health_percent: float = Field(default=0.0, ge=0, le=200)
+    outage_queue: str = "3.1"
+    outage_schedule_seed: int = 20260513
+    local_timezone: str = "Europe/Kyiv"
+
+    @field_validator("local_timezone")
+    @classmethod
+    def validate_local_timezone(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except ZoneInfoNotFoundError as exc:
+            raise ValueError(f"Invalid timezone '{value}'") from exc
+        return value
+
+
 class StationConfig(BaseModel):
     id: str
     name: str
     description: str
     solar: SolarConfig
+    grid: GridConfig = Field(default_factory=GridConfig)
 
 
 class AppConfig(BaseModel):

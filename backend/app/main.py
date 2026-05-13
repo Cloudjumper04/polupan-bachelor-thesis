@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 import pvlib
 from fastapi import FastAPI
+from sqlalchemy.exc import OperationalError
 from sqlmodel import Session
 
 from app.config_loader import calculate_config_hash, load_config
@@ -23,6 +24,11 @@ from app.storage.forecast_solar_repository import (
     ForecastSolarProduction,
     get_forecast_solar_range,
     list_forecast_solar_for_config,
+)
+from app.storage.grid_repository import (
+    GridAvailabilityPointRecord,
+    get_nearest_grid_availability_point,
+    list_grid_availability_points,
 )
 from app.storage.interpolated_solar_repository import (
     InterpolatedSolarProduction,
@@ -154,6 +160,44 @@ def get_solar_history_bounds(now: datetime | None = None) -> dict[str, Any]:
     engine = get_engine(_database_url())
     with Session(engine) as session:
         return build_solar_history_bounds_payload(session, config, now=now)
+
+
+@app.get("/api/grid/current")
+def get_grid_current(now: datetime | None = None) -> dict[str, Any]:
+    config = load_config(_config_path())
+    engine = get_engine(_database_url())
+    now_utc = _normalize_now(now)
+    with Session(engine) as session:
+        return build_grid_current_payload(session, config, now_utc)
+
+
+@app.get("/api/grid/history")
+def get_grid_history(start: datetime, end: datetime) -> dict[str, Any]:
+    config = load_config(_config_path())
+    engine = get_engine(_database_url())
+    station_timezone = ZoneInfo(config.station.grid.local_timezone)
+    start_utc = _normalize_query_datetime(start, station_timezone)
+    end_utc = _normalize_query_datetime(end, station_timezone)
+    if end_utc < start_utc:
+        start_utc, end_utc = end_utc, start_utc
+    with Session(engine) as session:
+        return build_grid_history_payload(session, start_utc, end_utc)
+
+
+@app.get("/api/grid/outages")
+def get_grid_outages(date: date) -> dict[str, Any]:
+    config = load_config(_config_path())
+    engine = get_engine(_database_url())
+    station_timezone = ZoneInfo(config.station.grid.local_timezone)
+    start_utc, end_utc = _grid_local_date_bounds(date, station_timezone)
+    with Session(engine) as session:
+        return build_grid_outages_payload(
+            session,
+            date,
+            station_timezone,
+            start_utc,
+            end_utc,
+        )
 
 
 def build_solar_dashboard_payload(
@@ -554,6 +598,168 @@ def build_solar_history_bounds_payload(
         "daily_start_local": _optional_local_iso(daily_start_utc, station_timezone),
         "daily_end_local": _optional_local_iso(daily_end_utc, station_timezone),
     }
+
+
+def build_grid_current_payload(
+    session: Session,
+    config: AppConfig,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    now_utc = _normalize_now(now)
+    try:
+        point = get_nearest_grid_availability_point(session, now_utc)
+    except OperationalError:
+        point = None
+    if point is None:
+        return {
+            "status": "empty",
+            "station": {
+                "id": config.station.id,
+                "name": config.station.name,
+                "timezone": config.station.grid.local_timezone,
+            },
+            "current": None,
+        }
+    return {
+        "status": "ok",
+        "station": {
+            "id": config.station.id,
+            "name": config.station.name,
+            "timezone": config.station.grid.local_timezone,
+        },
+        "current": _grid_point_payload(point),
+    }
+
+
+def build_grid_history_payload(
+    session: Session,
+    start_utc: datetime,
+    end_utc: datetime,
+) -> dict[str, Any]:
+    try:
+        rows = list_grid_availability_points(session, start_utc, end_utc)
+        cache_status = "ok" if rows else "empty_range"
+    except OperationalError:
+        rows = []
+        cache_status = "missing_table"
+    return {
+        "metadata": {
+            "requested_start_utc": start_utc.isoformat(),
+            "requested_end_utc": end_utc.isoformat(),
+            "returned_points": len(rows),
+            "cache_status": cache_status,
+        },
+        "points": [_grid_point_payload(row) for row in rows],
+    }
+
+
+def build_grid_outages_payload(
+    session: Session,
+    local_date: date,
+    station_timezone: ZoneInfo,
+    start_utc: datetime,
+    end_utc: datetime,
+) -> dict[str, Any]:
+    try:
+        rows = list_grid_availability_points(session, start_utc, end_utc)
+        cache_status = "ok" if rows else "empty_range"
+    except OperationalError:
+        rows = []
+        cache_status = "missing_table"
+    return {
+        "date_local": local_date.isoformat(),
+        "timezone": station_timezone.key,
+        "cache_status": cache_status,
+        "outage_queue": rows[0].outage_queue if rows else None,
+        "daily_outage_hours": rows[0].daily_outage_hours if rows else 0.0,
+        "windows": _grid_outage_windows_payload(rows, local_date, station_timezone),
+    }
+
+
+def _grid_point_payload(row: GridAvailabilityPointRecord) -> dict[str, Any]:
+    return {
+        "timestamp_utc": row.timestamp_utc.isoformat(),
+        "timestamp_local": row.timestamp_local.isoformat(),
+        "generation_health_percent": row.generation_health_percent,
+        "delivery_health_percent": row.delivery_health_percent,
+        "effective_health_percent": row.effective_health_percent,
+        "national_deficit_percent": row.deficit_percent,
+        "deficit_percent": row.deficit_percent,
+        "daily_outage_hours": row.daily_outage_hours,
+        "outage_level": row.outage_level,
+        "outage_queue": row.outage_queue,
+        "local_grid_available": row.local_grid_available,
+        "is_outage_now": row.is_outage_now,
+        "grid_voltage_v": row.grid_voltage_v,
+        "reason": row.reason,
+        "current_outage_window_start": _optional_iso(
+            row.current_outage_window_start_utc,
+        ),
+        "current_outage_window_end": _optional_iso(
+            row.current_outage_window_end_utc,
+        ),
+        "next_outage_window_start": _optional_iso(row.next_outage_window_start_utc),
+        "next_outage_window_end": _optional_iso(row.next_outage_window_end_utc),
+    }
+
+
+def _grid_outage_windows_payload(
+    rows: list[GridAvailabilityPointRecord],
+    local_date: date,
+    station_timezone: ZoneInfo,
+) -> list[dict[str, Any]]:
+    windows: dict[tuple[datetime, datetime], dict[str, Any]] = {}
+    for row in rows:
+        for start, end in (
+            (row.current_outage_window_start_utc, row.current_outage_window_end_utc),
+            (row.next_outage_window_start_utc, row.next_outage_window_end_utc),
+        ):
+            if start is None or end is None:
+                continue
+            if not _grid_window_overlaps_local_date(
+                start,
+                end,
+                local_date,
+                station_timezone,
+            ):
+                continue
+            key = (start, end)
+            windows[key] = {
+                "start_utc": start.isoformat(),
+                "end_utc": end.isoformat(),
+                "start_local": start.astimezone(station_timezone).isoformat(),
+                "end_local": end.astimezone(station_timezone).isoformat(),
+            }
+    return [
+        windows[key]
+        for key in sorted(windows, key=lambda value: value[0])
+    ]
+
+
+def _grid_window_overlaps_local_date(
+    start_utc: datetime,
+    end_utc: datetime,
+    local_date: date,
+    station_timezone: ZoneInfo,
+) -> bool:
+    day_start_local = datetime.combine(
+        local_date,
+        time.min,
+        tzinfo=station_timezone,
+    )
+    day_end_local = day_start_local + timedelta(days=1)
+    start_local = start_utc.astimezone(station_timezone)
+    end_local = end_utc.astimezone(station_timezone)
+    return start_local < day_end_local and end_local > day_start_local
+
+
+def _grid_local_date_bounds(
+    local_date: date,
+    station_timezone: ZoneInfo,
+) -> tuple[datetime, datetime]:
+    start_local = datetime.combine(local_date, time.min, tzinfo=station_timezone)
+    end_local = start_local + timedelta(days=1)
+    return start_local.astimezone(timezone.utc), end_local.astimezone(timezone.utc)
 
 
 def _current_payload(

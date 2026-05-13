@@ -6,6 +6,15 @@ station:
     реалізації дипломної роботи на тему "Програмний модуль автоматизації режимів зарядки
     акумуляторних батарей лабораторного стенду з сонячною генерацією енергії."
 
+  grid:
+    base_delivery_health_percent: 130.0
+    base_generation_health_percent: 130.0
+    regeneration_cap_percent: 150.0
+    minimum_health_percent: 0.0
+    outage_queue: "3.1"
+    outage_schedule_seed: 20260513
+    local_timezone: "Europe/Kyiv"
+
   solar:
     panel_types:
       - id: "axioma_200w"

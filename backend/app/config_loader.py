@@ -22,6 +22,8 @@ def load_config(path: str | Path) -> AppConfig:
 
 def calculate_config_hash(config: AppConfig) -> str:
     payload = _model_to_plain_data(config)
+    # Grid simulation settings do not affect solar generation caches.
+    payload.get("station", {}).pop("grid", None)
     stable_json = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(stable_json.encode("utf-8")).hexdigest()
 

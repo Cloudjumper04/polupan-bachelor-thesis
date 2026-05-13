@@ -21,6 +21,7 @@ for path in (SCRIPTS_DIR, BACKEND_DIR):
         sys.path.insert(0, str(path))
 
 import update_weather_cache
+import generate_grid_availability
 
 from app.config_loader import calculate_config_hash, load_config
 from app.schemas import AppConfig
@@ -114,6 +115,7 @@ class SolarDataMaintenanceSummary:
     weather_cache: update_weather_cache.WeatherCacheSummary
     historical_adjusted_solar: AdjustedSolarMaintenanceSummary
     forecast_adjusted_solar: AdjustedSolarMaintenanceSummary
+    grid_availability: generate_grid_availability.GridGenerationSummary | None = None
 
 
 @dataclass(frozen=True)
@@ -285,6 +287,14 @@ def run_once(
         sys.stderr.flush()
         return False
 
+    grid_summary = getattr(summary, "grid_availability", None)
+    grid_message = ""
+    if grid_summary is not None:
+        grid_message = (
+            f" grid_availability_rows={grid_summary.availability_rows_inserted} "
+            f"grid_damage_events={grid_summary.damage_events_inserted}"
+        )
+
     _log(
         "solar data maintenance completed "
         f"station_id={summary.station_id} "
@@ -297,6 +307,7 @@ def run_once(
         f"historical_solar_regenerated={summary.historical_adjusted_solar.regenerated} "
         f"forecast_solar_rows={summary.forecast_adjusted_solar.rows} "
         f"forecast_solar_regenerated={summary.forecast_adjusted_solar.regenerated}"
+        f"{grid_message}"
     )
     return True
 
@@ -742,6 +753,19 @@ def run_solar_data_maintenance(
             config_hash=config_hash,
         )
 
+    grid_summary = None
+    try:
+        grid_summary = generate_grid_availability.run_grid_availability_generation(
+            config_path=config_path,
+            database_url=database_url,
+            start_date=history_start,
+            days_ahead=7,
+            seed=config.station.grid.outage_schedule_seed,
+            now=now,
+        )
+    except Exception as exc:
+        _log_error(f"grid availability maintenance failed: {exc}")
+
     return SolarDataMaintenanceSummary(
         station_id=station_id,
         config_hash=config_hash,
@@ -751,6 +775,7 @@ def run_solar_data_maintenance(
         weather_cache=weather_summary,
         historical_adjusted_solar=historical_summary,
         forecast_adjusted_solar=forecast_summary,
+        grid_availability=grid_summary,
     )
 
 
