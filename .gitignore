@@ -60,3 +60,6 @@ desktop.ini
 
 # Local AI/tooling guidance
 AGENTS.md
+
+# Local Codex handoff reports
+reports/
