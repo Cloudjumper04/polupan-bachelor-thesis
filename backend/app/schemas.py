@@ -1,6 +1,8 @@
+from datetime import date, datetime
+from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class SolarPanelType(BaseModel):
@@ -62,12 +64,44 @@ class GridConfig(BaseModel):
         return value
 
 
+class BatteryConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    chemistry: Literal["lead_acid", "lifepo4", "li_ion"]
+    nominal_voltage_v: int
+    capacity_ah: float = Field(gt=0)
+    installation_date: str
+
+    @field_validator("nominal_voltage_v")
+    @classmethod
+    def validate_nominal_voltage(cls, value: int) -> int:
+        if value not in {12, 24}:
+            raise ValueError("Battery nominal voltage must be either 12 or 24 V")
+        return value
+
+    @field_validator("installation_date", mode="before")
+    @classmethod
+    def validate_installation_date(cls, value: object) -> str:
+        if isinstance(value, datetime):
+            raise ValueError("Battery installation date must be a date, not a datetime")
+        if isinstance(value, date):
+            return value.isoformat()
+        if isinstance(value, str):
+            try:
+                date.fromisoformat(value)
+            except ValueError as exc:
+                raise ValueError("Battery installation date must use YYYY-MM-DD") from exc
+            return value
+        raise ValueError("Battery installation date must use YYYY-MM-DD")
+
+
 class StationConfig(BaseModel):
     id: str
     name: str
     description: str
     solar: SolarConfig
     grid: GridConfig = Field(default_factory=GridConfig)
+    battery: BatteryConfig
 
 
 class AppConfig(BaseModel):
