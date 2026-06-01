@@ -21,6 +21,19 @@ station:
     capacity_ah: 200
     installation_date: 2025-10-06
 
+  ems:
+    mode: "auto"
+    inverter_output_limit_w: 2000
+    critical_soc_percent: 10
+    reserve_soc_percent: 30
+    normal_target_soc_percent: 80
+    backup_target_soc_percent: 100
+    cheap_tariff_start: "23:00"
+    cheap_tariff_end: "07:00"
+    cheap_tariff_price_factor: 0.5
+    allow_grid_charging: true
+    recent_outage_recovery_minutes: 60
+
   solar:
     panel_types:
       - id: "axioma_200w"

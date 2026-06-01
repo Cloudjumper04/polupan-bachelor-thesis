@@ -2,7 +2,7 @@ from datetime import date, datetime
 from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class SolarPanelType(BaseModel):
@@ -95,6 +95,58 @@ class BatteryConfig(BaseModel):
         raise ValueError("Battery installation date must use YYYY-MM-DD")
 
 
+class EmsConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mode: Literal[
+        "auto",
+        "grid_priority",
+        "solar_priority",
+        "self_consumption",
+        "battery_priority",
+        "backup_reserve",
+        "force_charge",
+    ] = "auto"
+    inverter_output_limit_w: float = Field(default=2000.0, gt=0)
+    critical_soc_percent: float = Field(default=10.0, ge=0, le=100)
+    reserve_soc_percent: float = Field(default=30.0, ge=0, le=100)
+    normal_target_soc_percent: float = Field(default=80.0, ge=0, le=100)
+    backup_target_soc_percent: float = Field(default=100.0, ge=0, le=100)
+    cheap_tariff_start: str = "23:00"
+    cheap_tariff_end: str = "07:00"
+    cheap_tariff_price_factor: float = Field(default=0.5, gt=0)
+    allow_grid_charging: bool = True
+    recent_outage_recovery_minutes: int = Field(default=60, ge=0)
+
+    @field_validator("cheap_tariff_start", "cheap_tariff_end")
+    @classmethod
+    def validate_clock_time(cls, value: str) -> str:
+        parts = str(value).split(":")
+        if len(parts) != 2:
+            raise ValueError("EMS tariff time must use HH:MM")
+        try:
+            hour = int(parts[0])
+            minute = int(parts[1])
+        except ValueError as exc:
+            raise ValueError("EMS tariff time must use HH:MM") from exc
+        if not (0 <= hour <= 23 and 0 <= minute <= 59):
+            raise ValueError("EMS tariff time must use HH:MM")
+        return f"{hour:02d}:{minute:02d}"
+
+    @model_validator(mode="after")
+    def validate_soc_thresholds(self) -> "EmsConfig":
+        if not (
+            self.critical_soc_percent
+            < self.reserve_soc_percent
+            < self.normal_target_soc_percent
+            <= self.backup_target_soc_percent
+        ):
+            raise ValueError(
+                "EMS SoC thresholds must satisfy critical < reserve < normal <= backup"
+            )
+        return self
+
+
 class StationConfig(BaseModel):
     id: str
     name: str
@@ -102,6 +154,7 @@ class StationConfig(BaseModel):
     solar: SolarConfig
     grid: GridConfig = Field(default_factory=GridConfig)
     battery: BatteryConfig
+    ems: EmsConfig = Field(default_factory=EmsConfig)
 
 
 class AppConfig(BaseModel):
