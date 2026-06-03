@@ -30,8 +30,9 @@ import {
   YAxis,
 } from "recharts";
 import GridWidget from "./components/GridWidget";
+import BatteryModule from "./components/dashboard/BatteryModule";
 import EmsModule from "./components/dashboard/EmsModule";
-import { useStationClock } from "./hooks/useStationClock";
+import LoadModule from "./components/dashboard/LoadModule";
 
 const CHARTS = [
   ["last30m", "Останні 30 хвилин"],
@@ -417,7 +418,6 @@ export default function App() {
               <div className="power-summary-wrap">
                 <CurrentOperatingSummary
                   fallbackCurrent={current}
-                  stationTimezone={stationTimezone}
                 />
               </div>
             </header>
@@ -457,6 +457,10 @@ export default function App() {
 
           <aside className="dashboard-right-column" aria-label="Модулі керування станцією">
             <EmsModule />
+            <div className="battery-load-row">
+              <BatteryModule />
+              <LoadModule />
+            </div>
           </aside>
 
           <section className={`history-panel${historyOpen ? " active" : ""}`}>
@@ -610,8 +614,7 @@ function WeatherWidget({ weather }) {
   );
 }
 
-function CurrentOperatingSummary({ fallbackCurrent, stationTimezone }) {
-  const stationClock = useStationClock(stationTimezone);
+function CurrentOperatingSummary({ fallbackCurrent }) {
   const [displayPoint, setDisplayPoint] = useState(() =>
     normalizeCurrentPoint(fallbackCurrent),
   );
@@ -675,12 +678,11 @@ function CurrentOperatingSummary({ fallbackCurrent, stationTimezone }) {
   const power = displayPoint?.power ?? fallbackPoint?.power;
   const voltage = displayPoint?.voltage ?? fallbackPoint?.voltage;
   const current = displayPoint?.current ?? fallbackPoint?.current;
-  const currentTimeLabel = stationClock?.timeLabel ?? "--:--";
 
   return (
     <div className="power-summary">
       <div className="power-total">
-        <div className="metric-label">Загальна потужність · {currentTimeLabel}</div>
+        <div className="metric-label">Загальна потужність</div>
         <div className="power-value">
           {formatPower(power)} <span className="unit">W</span>
         </div>
@@ -777,12 +779,9 @@ function SolarChart({ points, timezone, axisMode = "time" }) {
         <Tooltip
           formatter={(value) => [`${formatPower(value)} W`, "Потужність"]}
           labelFormatter={(value) => formatDateTime(value, timezone)}
-          contentStyle={{
-            border: "1px solid #b8b8af",
-            borderRadius: 8,
-            fontFamily: "Jura, system-ui, sans-serif",
-            fontWeight: 700,
-          }}
+          contentStyle={solarTooltipStyle}
+          itemStyle={solarTooltipItemStyle}
+          labelStyle={solarTooltipLabelStyle}
         />
         {last && (
           <ReferenceLine
@@ -805,6 +804,28 @@ function SolarChart({ points, timezone, axisMode = "time" }) {
     </ResponsiveContainer>
   );
 }
+
+const solarTooltipStyle = {
+  border: "1px solid #b8b8af",
+  borderRadius: 6,
+  padding: "6px 8px",
+  fontFamily: "Jura, system-ui, sans-serif",
+  fontSize: 11,
+  fontWeight: 700,
+  lineHeight: 1.08,
+};
+
+const solarTooltipItemStyle = {
+  padding: 0,
+  fontSize: 11,
+  lineHeight: 1.08,
+};
+
+const solarTooltipLabelStyle = {
+  marginBottom: 2,
+  fontSize: 11,
+  lineHeight: 1.08,
+};
 
 function DailyEnergyChart({ points, range }) {
   const data = points

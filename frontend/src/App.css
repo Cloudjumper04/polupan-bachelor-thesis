@@ -194,7 +194,13 @@ svg text {
 
 .dashboard-right-column {
   --ems-aligned-height: 376px;
-  grid-template-rows: var(--ems-aligned-height);
+  --solar-default-height: max(430px, 50vh);
+  --solar-head-height: 112px;
+  height: calc(
+    var(--ems-aligned-height) + var(--solar-default-height) - var(--solar-head-height)
+  );
+  min-height: calc(var(--ems-aligned-height) + 318px);
+  grid-template-rows: var(--ems-aligned-height) minmax(0, 1fr);
 }
 
 .dashboard-left-column .grid-card,
@@ -205,11 +211,74 @@ svg text {
 .grid-card,
 .solar-card,
 .history-panel,
-.ems-card {
+.ems-card,
+.system-card {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
+}
+
+.system-card {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: 56px minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.system-card-head {
+  min-width: 0;
+  height: 56px;
+  padding: 0 14px 0 16px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 1px auto;
+  gap: 12px;
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  background: linear-gradient(180deg, rgba(250, 250, 248, 0.98), var(--surface-2) 132%);
+}
+
+.system-head-title {
+  min-width: 0;
+  margin: 0;
+  color: var(--black);
+  font-size: clamp(20px, 1.7vw, 26px);
+  font-weight: 900;
+  letter-spacing: -0.55px;
+  line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-shadow: 0.22px 0 currentColor;
+}
+
+.system-head-divider {
+  width: 1px;
+  height: 34px;
+  background: rgba(0, 0, 0, 0.14);
+}
+
+.system-head-value {
+  color: var(--black);
+  font-size: clamp(21px, 1.8vw, 28px);
+  font-weight: 900;
+  letter-spacing: -0.65px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.system-card-body {
+  min-height: 0;
+}
+
+.battery-load-row {
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 16px;
 }
 
 .solar-card {
@@ -229,8 +298,9 @@ svg text {
 .solar-card.expanded {
   width: 100%;
   max-width: none;
-  height: 75vh;
-  min-height: 620px;
+  height: clamp(428px, calc(100vh - 418px), 620px);
+  min-height: 428px;
+  max-height: 620px;
   grid-template-rows: 68px minmax(0, 1fr) 34px;
 }
 
@@ -1059,8 +1129,8 @@ svg text {
 }
 
 .ems-flow-node.load {
-  width: 140px;
-  right: 5%;
+  width: 158px;
+  right: 2.6%;
   top: 50%;
   transform: translateY(-50%);
 }
@@ -1193,6 +1263,219 @@ svg text {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.battery-card,
+.load-card {
+  height: 100%;
+}
+
+.battery-body {
+  position: relative;
+  padding: 11px 12px 10px;
+  display: grid;
+  grid-template-rows: minmax(108px, 1fr) minmax(112px, 1fr);
+  gap: 9px;
+  background: var(--surface);
+}
+
+.battery-stats-grid,
+.load-stats-grid {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.battery-stats-grid {
+  position: relative;
+}
+
+.battery-stat-card,
+.load-stat-card {
+  min-width: 0;
+  min-height: 0;
+  padding: 7px 10px;
+  display: grid;
+  align-content: center;
+  gap: 5px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 13px;
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.86);
+}
+
+.battery-stat-label,
+.load-stat-label {
+  min-width: 0;
+  color: rgba(0, 0, 0, 0.58);
+  font-size: 10px;
+  font-weight: 850;
+  line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.battery-stat-value,
+.load-stat-value {
+  min-width: 0;
+  color: var(--black);
+  font-size: clamp(15px, 1.34vw, 18px);
+  font-weight: 900;
+  letter-spacing: -0.45px;
+  line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: clip;
+}
+
+.battery-energy-value {
+  font-size: clamp(13px, 1.08vw, 16px);
+  letter-spacing: -0.65px;
+}
+
+.battery-stat-unit,
+.load-stat-unit {
+  color: rgba(0, 0, 0, 0.6);
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.battery-info-toggle {
+  position: absolute;
+  right: -3px;
+  top: 50%;
+  z-index: 8;
+  width: 18px;
+  height: 34px;
+  border: 0;
+  background: transparent;
+  color: rgba(0, 0, 0, 0.62);
+  font-size: 24px;
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+  transform: translateY(-50%);
+}
+
+.battery-info-toggle:hover {
+  color: var(--black);
+}
+
+.battery-info-popover {
+  position: absolute;
+  right: 16px;
+  top: 50%;
+  z-index: 20;
+  width: min(230px, calc(100% - 32px));
+  padding: 10px 12px;
+  display: grid;
+  gap: 7px;
+  border: 1px solid var(--line-dark);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.16);
+  transform: translateY(-50%);
+}
+
+.battery-info-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  color: rgba(0, 0, 0, 0.66);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.05;
+  white-space: nowrap;
+}
+
+.battery-info-row strong {
+  color: var(--black);
+  font-size: 11.5px;
+  font-weight: 900;
+}
+
+.battery-chart-card,
+.load-chart-card {
+  min-height: 0;
+  padding: 10px 10px 9px;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 7px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 13px;
+  background: rgba(255, 255, 255, 0.82);
+  overflow: hidden;
+}
+
+.battery-chart-head,
+.load-chart-head {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.battery-chart-title,
+.load-chart-title {
+  min-width: 0;
+  color: var(--black);
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.load-chart-meta {
+  color: rgba(0, 0, 0, 0.55);
+  font-size: 10.5px;
+  font-weight: 800;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.battery-chart-wrap,
+.load-chart-wrap {
+  min-height: 0;
+}
+
+.load-body {
+  padding: 11px 12px 10px;
+  display: grid;
+  grid-template-rows: minmax(104px, auto) minmax(122px, auto) minmax(122px, auto);
+  gap: 9px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--surface);
+}
+
+.load-money-value {
+  font-size: clamp(14px, 1.18vw, 17px);
+}
+
+.load-currency-unit {
+  margin-left: 3px;
+  color: rgba(0, 0, 0, 0.62);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0;
+}
+
+.compact-empty-chart {
+  height: 100%;
+  min-height: 82px;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
 }
 
 @keyframes ems-flow-dash-grid {
@@ -2014,7 +2297,13 @@ svg text {
 
   .dashboard-right-column {
     --ems-aligned-height: auto;
+    height: auto;
+    min-height: 0;
     grid-template-rows: none;
+  }
+
+  .battery-load-row {
+    grid-template-columns: 1fr;
   }
 
   .grid-card,
@@ -2148,6 +2437,14 @@ svg text {
 
   .ems-metrics-row {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .system-card {
+    min-height: 300px;
+  }
+
+  .load-card {
+    min-height: 520px;
   }
 
   .ems-metric-tile:nth-child(2) {
