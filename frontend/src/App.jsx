@@ -30,6 +30,7 @@ import {
   YAxis,
 } from "recharts";
 import GridWidget from "./components/GridWidget";
+import EmsModule from "./components/dashboard/EmsModule";
 import { useStationClock } from "./hooks/useStationClock";
 
 const CHARTS = [
@@ -389,9 +390,10 @@ export default function App() {
 
       <main className="page">
         <section className="main-layout">
-          <GridWidget stationTimezone={stationTimezone} />
+          <div className="dashboard-left-column">
+            <GridWidget stationTimezone={stationTimezone} />
 
-          <section className={`solar-card${expanded ? " expanded" : ""}`}>
+            <section className={`solar-card${expanded ? " expanded" : ""}`}>
             <button
               className="expand-card-button"
               type="button"
@@ -450,7 +452,12 @@ export default function App() {
                 <ChevronDown aria-hidden="true" />
               </button>
             </footer>
-          </section>
+            </section>
+          </div>
+
+          <aside className="dashboard-right-column" aria-label="Модулі керування станцією">
+            <EmsModule />
+          </aside>
 
           <section className={`history-panel${historyOpen ? " active" : ""}`}>
             <div className="history-head">
