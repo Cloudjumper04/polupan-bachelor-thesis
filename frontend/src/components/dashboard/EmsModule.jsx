@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowRight,
   Battery,
@@ -20,6 +20,8 @@ export default function EmsModule({ data = emsMockData }) {
   const [controlMode, setControlMode] = useState(data.initialControlMode);
   const [manualModeId, setManualModeId] = useState(data.manualModeId);
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const previousInitialControlMode = useRef(data.initialControlMode);
+  const previousManualModeId = useRef(data.manualModeId);
 
   const modeById = useMemo(
     () => new Map(data.modes.map((mode) => [mode.id, mode])),
@@ -30,6 +32,20 @@ export default function EmsModule({ data = emsMockData }) {
       ? modeById.get(data.autoModeId)
       : modeById.get(manualModeId);
   const modeLocked = controlMode === "auto";
+
+  useEffect(() => {
+    if (controlMode === previousInitialControlMode.current) {
+      setControlMode(data.initialControlMode);
+    }
+    previousInitialControlMode.current = data.initialControlMode;
+  }, [controlMode, data.initialControlMode]);
+
+  useEffect(() => {
+    if (manualModeId === previousManualModeId.current) {
+      setManualModeId(data.manualModeId);
+    }
+    previousManualModeId.current = data.manualModeId;
+  }, [data.manualModeId, manualModeId]);
 
   function selectControlMode(nextMode) {
     setControlMode(nextMode);

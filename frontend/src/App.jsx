@@ -33,6 +33,12 @@ import GridWidget from "./components/GridWidget";
 import BatteryModule from "./components/dashboard/BatteryModule";
 import EmsModule from "./components/dashboard/EmsModule";
 import LoadModule from "./components/dashboard/LoadModule";
+import { fetchSystemDashboard } from "./api/system";
+import {
+  batteryMockData,
+  emsMockData,
+  loadMockData,
+} from "./data/dashboardMockData";
 
 const CHARTS = [
   ["last30m", "Останні 30 хвилин"],
@@ -43,6 +49,7 @@ const CHARTS = [
 ];
 
 const POLL_INTERVAL_MS = 5000;
+const SYSTEM_DASHBOARD_POLL_INTERVAL_MS = 60000;
 const CURRENT_BUFFER_FETCH_INTERVAL_MS = 30000;
 const CURRENT_DISPLAY_INTERVAL_MS = 1000;
 const CURRENT_BUFFER_SECONDS = 75;
@@ -52,9 +59,12 @@ const MAX_POWER_HISTORY_DAYS = 31;
 
 export default function App() {
   const [dashboard, setDashboard] = useState(null);
+  const [systemDashboard, setSystemDashboard] = useState(null);
   const [weatherData, setWeatherData] = useState(null);
   const [status, setStatus] = useState("loading");
+  const [systemStatus, setSystemStatus] = useState("loading");
   const [error, setError] = useState("");
+  const [systemError, setSystemError] = useState("");
   const [expanded, setExpanded] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyInputStart, setHistoryInputStart] = useState("");
@@ -109,6 +119,34 @@ export default function App() {
 
     loadDashboard();
     const timer = window.setInterval(loadDashboard, POLL_INTERVAL_MS);
+    return () => {
+      controller.abort();
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    async function loadSystemDashboard() {
+      try {
+        const payload = await fetchSystemDashboard({ signal: controller.signal });
+        setSystemDashboard(payload);
+        setSystemStatus("ready");
+        setSystemError("");
+      } catch (loadError) {
+        if (loadError.name === "AbortError") return;
+        console.warn("System dashboard API unavailable; using static fallback.", loadError);
+        setSystemStatus("error");
+        setSystemError("Дані EMS, батареї та навантаження тимчасово недоступні");
+      }
+    }
+
+    loadSystemDashboard();
+    const timer = window.setInterval(
+      loadSystemDashboard,
+      SYSTEM_DASHBOARD_POLL_INTERVAL_MS,
+    );
     return () => {
       controller.abort();
       window.clearInterval(timer);
@@ -209,6 +247,17 @@ export default function App() {
   const chartData = dashboard?.charts ?? {};
   const historyData = historyDataByMode[activeHistoryMode];
   const activeAppliedRange = historyAppliedRanges[activeHistoryMode];
+  const emsModuleData = mapEmsModuleData(systemDashboard?.ems, emsMockData);
+  const batteryModuleData = mapBatteryModuleData(
+    systemDashboard?.battery,
+    stationTimezone,
+    batteryMockData,
+  );
+  const loadModuleData = mapLoadModuleData(
+    systemDashboard?.load,
+    stationTimezone,
+    loadMockData,
+  );
 
   function updateHistoryField(field, value) {
     setHistoryClampMessage("");
@@ -455,11 +504,17 @@ export default function App() {
             </section>
           </div>
 
-          <aside className="dashboard-right-column" aria-label="Модулі керування станцією">
-            <EmsModule />
+          <aside
+            className="dashboard-right-column"
+            aria-label="Модулі керування станцією"
+            aria-busy={systemStatus === "loading"}
+            data-system-status={systemStatus}
+            title={systemStatus === "error" ? systemError : undefined}
+          >
+            <EmsModule data={emsModuleData} />
             <div className="battery-load-row">
-              <BatteryModule />
-              <LoadModule />
+              <BatteryModule data={batteryModuleData} />
+              <LoadModule data={loadModuleData} />
             </div>
           </aside>
 
@@ -1014,6 +1069,237 @@ function selectBufferedPoint(points, nowMs) {
     selected = point;
   }
   return selected;
+}
+
+function mapEmsModuleData(apiEms, fallback) {
+  if (!apiEms) return fallback;
+  const flow = apiEms.flow ?? {};
+  const metrics = apiEms.metrics ?? {};
+  const modeId = apiEms.selected_mode_frontend_id ?? fallback.autoModeId;
+
+  return {
+    ...fallback,
+    initialControlMode: normalizeEmsControlMode(
+      apiEms.control_mode,
+      fallback.initialControlMode,
+    ),
+    autoModeId: modeId,
+    manualModeId: modeId,
+    riskScore: clampNumber(apiEms.risk_score, fallback.riskScore, 0, 100),
+    titleTooltip: apiEms.title_tooltip ?? fallback.titleTooltip,
+    riskTooltip: apiEms.risk_tooltip ?? fallback.riskTooltip,
+    nodes: {
+      grid: {
+        ...fallback.nodes.grid,
+        value: formatKw(flow.grid_power_w, fallback.nodes.grid.value),
+      },
+      solar: {
+        ...fallback.nodes.solar,
+        value: formatKw(flow.solar_power_w, fallback.nodes.solar.value),
+      },
+      battery: {
+        ...fallback.nodes.battery,
+        value: formatKw(flow.battery_net_power_w, fallback.nodes.battery.value, {
+          signed: true,
+        }),
+      },
+      load: {
+        ...fallback.nodes.load,
+        value: formatKw(flow.load_power_w, fallback.nodes.load.value),
+      },
+    },
+    metrics: [
+      {
+        ...fallback.metrics[0],
+        value: formatInverterState(metrics.inverter_state, fallback.metrics[0].value),
+      },
+      {
+        ...fallback.metrics[1],
+        value: formatWatts(
+          metrics.battery_charge_power_w,
+          fallback.metrics[1].value,
+        ),
+      },
+      {
+        ...fallback.metrics[2],
+        value: formatPercentValue(
+          metrics.target_soc_percent,
+          fallback.metrics[2].value,
+        ),
+      },
+      {
+        ...fallback.metrics[3],
+        value: formatPercentValue(
+          metrics.cutoff_soc_percent,
+          fallback.metrics[3].value,
+        ),
+      },
+    ],
+  };
+}
+
+function mapBatteryModuleData(apiBattery, timezone, fallback) {
+  if (!apiBattery) return fallback;
+  const info = apiBattery.info ?? {};
+  const energyHistory = Array.isArray(apiBattery.energy_history)
+    ? apiBattery.energy_history
+        .map((point) => ({
+          timestamp: point.timestamp_utc ?? point.timestamp_local,
+          wh: readNumber(point.energy_wh, null),
+        }))
+        .filter((point) => point.timestamp && point.wh !== null)
+    : [];
+
+  return {
+    ...fallback,
+    timezone: timezone ?? fallback.timezone,
+    soc: readNumber(apiBattery.soc_percent, fallback.soc),
+    soh: readNumber(apiBattery.soh_percent, fallback.soh),
+    voltage: readNumber(apiBattery.voltage_v, fallback.voltage),
+    energy: {
+      currentWh: Math.round(readNumber(apiBattery.energy_wh, fallback.energy.currentWh)),
+      totalWh: Math.round(
+        readNumber(apiBattery.usable_capacity_wh, fallback.energy.totalWh),
+      ),
+    },
+    info: [
+      {
+        ...fallback.info[0],
+        value: formatBatteryChemistry(info.chemistry, fallback.info[0].value),
+      },
+      {
+        ...fallback.info[1],
+        value: formatUnitNumber(info.capacity_ah, fallback.info[1].value, "Ah", 0),
+      },
+      {
+        ...fallback.info[2],
+        value: formatUnitNumber(
+          info.nominal_voltage_v,
+          fallback.info[2].value,
+          "V",
+          0,
+        ),
+      },
+      {
+        ...fallback.info[3],
+        value: formatDateForDisplay(
+          info.installation_date,
+          fallback.info[3].value,
+        ),
+      },
+    ],
+    energyHistory: energyHistory.length > 0 ? energyHistory : fallback.energyHistory,
+  };
+}
+
+function mapLoadModuleData(apiLoad, timezone, fallback) {
+  if (!apiLoad) return fallback;
+  const powerHistory = Array.isArray(apiLoad.power_24h)
+    ? apiLoad.power_24h
+        .map((point) => ({
+          timestamp: point.timestamp_utc,
+          w: Math.round(readNumber(point.power_w, NaN)),
+        }))
+        .filter((point) => point.timestamp && Number.isFinite(point.w))
+    : [];
+  const monthlyEnergyHistory = Array.isArray(apiLoad.monthly_energy)
+    ? apiLoad.monthly_energy
+        .map((point) => ({
+          date: point.date,
+          wh: Math.round(readNumber(point.energy_wh, NaN)),
+        }))
+        .filter((point) => point.date && Number.isFinite(point.wh))
+    : [];
+
+  return {
+    ...fallback,
+    timezone: timezone ?? fallback.timezone,
+    currentPowerW: Math.round(readNumber(apiLoad.current_power_w, fallback.currentPowerW)),
+    dailyEnergyKwh: readNumber(apiLoad.daily_energy_kwh, fallback.dailyEnergyKwh),
+    solarCoveredPercent: Math.round(
+      clampNumber(
+        apiLoad.solar_covered_percent,
+        fallback.solarCoveredPercent,
+        0,
+        100,
+      ),
+    ),
+    moneySavedUah: -Math.abs(
+      readNumber(apiLoad.money_saved_uah, Math.abs(fallback.moneySavedUah)),
+    ),
+    monthlyEnergyKwh: readNumber(
+      apiLoad.monthly_energy_kwh,
+      fallback.monthlyEnergyKwh,
+    ),
+    powerHistory: powerHistory.length > 0 ? powerHistory : fallback.powerHistory,
+    monthlyEnergyHistory:
+      monthlyEnergyHistory.length > 0
+        ? monthlyEnergyHistory
+        : fallback.monthlyEnergyHistory,
+  };
+}
+
+function normalizeEmsControlMode(value, fallback) {
+  return value === "manual" || value === "auto" ? value : fallback;
+}
+
+function formatKw(value, fallback, { signed = false } = {}) {
+  const numeric = readNumber(value, null);
+  if (numeric === null) return fallback;
+  const kw = numeric / 1000;
+  if (!signed) return `${kw.toFixed(2)} kW`;
+  if (kw > 0) return `+${kw.toFixed(2)} kW`;
+  if (kw < 0) return `-${Math.abs(kw).toFixed(2)} kW`;
+  return "0.00 kW";
+}
+
+function formatWatts(value, fallback) {
+  const numeric = readNumber(value, null);
+  return numeric === null ? fallback : `${Math.round(numeric)} W`;
+}
+
+function formatPercentValue(value, fallback) {
+  const numeric = readNumber(value, null);
+  return numeric === null ? fallback : `${Math.round(numeric)}%`;
+}
+
+function formatInverterState(value, fallback) {
+  if (!value) return fallback;
+  if (value === "pass_through") return "Pass-through";
+  return `${value}`
+    .split("_")
+    .filter(Boolean)
+    .map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`)
+    .join("-");
+}
+
+function formatBatteryChemistry(value, fallback) {
+  const normalized = `${value ?? ""}`.toLowerCase();
+  if (normalized === "lead_acid") return "Lead-acid";
+  if (normalized === "lifepo4") return "LiFePO4";
+  if (normalized === "li_ion") return "Li-ion";
+  return fallback;
+}
+
+function formatDateForDisplay(value, fallback) {
+  const match = `${value ?? ""}`.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return match ? `${match[3]}.${match[2]}.${match[1]}` : fallback;
+}
+
+function formatUnitNumber(value, fallback, unit, digits = 0) {
+  const numeric = readNumber(value, null);
+  return numeric === null ? fallback : `${numeric.toFixed(digits)} ${unit}`;
+}
+
+function clampNumber(value, fallback, min, max) {
+  const numeric = readNumber(value, fallback);
+  return Math.min(max, Math.max(min, numeric));
+}
+
+function readNumber(value, fallback) {
+  if (value === null || value === undefined) return fallback;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
 }
 
 function nullableNumber(value) {
