@@ -1,10 +1,14 @@
 station:
   id: "smart_energy_lab"
   name: "SmartEnergy Lab"
+  installation_date: 2025-10-06
   description: >
     Симуляція сонячної станції в лабораторії SmartEnergy в межах
     реалізації дипломної роботи на тему "Програмний модуль автоматизації режимів зарядки
     акумуляторних батарей лабораторного стенду з сонячною генерацією енергії."
+
+  economics:
+    grid_tariff_uah_per_kwh: 4.32
 
   grid:
     base_delivery_health_percent: 130.0

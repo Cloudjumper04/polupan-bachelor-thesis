@@ -64,6 +64,12 @@ class GridConfig(BaseModel):
         return value
 
 
+class EconomicsConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    grid_tariff_uah_per_kwh: float = Field(default=4.32, gt=0)
+
+
 class BatteryConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -151,10 +157,27 @@ class StationConfig(BaseModel):
     id: str
     name: str
     description: str
+    installation_date: str
     solar: SolarConfig
     grid: GridConfig = Field(default_factory=GridConfig)
+    economics: EconomicsConfig = Field(default_factory=EconomicsConfig)
     battery: BatteryConfig
     ems: EmsConfig = Field(default_factory=EmsConfig)
+
+    @field_validator("installation_date", mode="before")
+    @classmethod
+    def validate_installation_date(cls, value: object) -> str:
+        if isinstance(value, datetime):
+            raise ValueError("Station installation date must be a date, not a datetime")
+        if isinstance(value, date):
+            return value.isoformat()
+        if isinstance(value, str):
+            try:
+                date.fromisoformat(value)
+            except ValueError as exc:
+                raise ValueError("Station installation date must use YYYY-MM-DD") from exc
+            return value
+        raise ValueError("Station installation date must use YYYY-MM-DD")
 
 
 class AppConfig(BaseModel):
