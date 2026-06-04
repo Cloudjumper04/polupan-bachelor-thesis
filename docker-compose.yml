@@ -33,25 +33,17 @@ services:
       - backend-api
     restart: unless-stopped
 
-  weather-scheduler:
+  data-scheduler:
     build:
       context: .
       dockerfile: backend/Dockerfile
-    container_name: smartenergy-weather-scheduler
+    container_name: smartenergy-data-scheduler
     volumes:
       - ./backend/data:/app/backend/data
       - ./backend/config:/app/backend/config:ro
     command:
       - python
-      - backend/scripts/solar_data_scheduler.py
-      - --history-start
-      - "2025-10-06"
-      - --days-ahead
-      - "2"
-      - --maintenance-interval-hours
-      - "12"
-      - --fast-cache-interval-seconds
-      - "60"
-      - --full-cache-interval-minutes
-      - "45"
+      - backend/scripts/run_data_pipeline_scheduler.py
+      - --interval-minutes
+      - "360"
     restart: unless-stopped

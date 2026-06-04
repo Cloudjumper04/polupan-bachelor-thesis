@@ -30,37 +30,48 @@ The system will simulate a solar-powered laboratory stand and provide charging a
 6. Web dashboard
 7. Docker setup
 
-## Docker solar data maintenance
+## Data pipeline maintenance
 
-The solar data scheduler persists SQLite data through the host directory
-`./backend/data`, mounted into the container at `/app/backend/data`.
+The `data-scheduler` service maintains SQLite dashboard data through the host
+directory `./backend/data`, mounted into the container at `/app/backend/data`.
+It updates weather, solar, grid, Load, Battery, and EMS data through the
+dependency-ordered one-shot pipeline.
+
+Manual one-shot update:
+
+```bash
+python backend/scripts/update_data_pipeline.py
+```
+
+Long-running scheduler:
+
+```bash
+python backend/scripts/run_data_pipeline_scheduler.py
+```
 
 Build the scheduler image:
 
 ```bash
-docker compose build weather-scheduler
-```
-
-Run the full scheduler in the foreground:
-
-```bash
-docker compose run --rm weather-scheduler python backend/scripts/solar_data_scheduler.py --history-start 2025-10-06 --days-ahead 2 --interval-hours 12
+docker compose build data-scheduler
 ```
 
 Start the scheduler:
 
 ```bash
-docker compose up -d weather-scheduler
+docker compose up -d data-scheduler
 ```
 
 View scheduler logs:
 
 ```bash
-docker compose logs -f weather-scheduler
+docker compose logs -f data-scheduler
 ```
 
 Stop the scheduler:
 
 ```bash
-docker compose stop weather-scheduler
+docker compose stop data-scheduler
 ```
+
+Fallback source values are disabled by default. Use `--allow-fallbacks` only for
+deliberate demo or test runs where synthetic fallback data is acceptable.
