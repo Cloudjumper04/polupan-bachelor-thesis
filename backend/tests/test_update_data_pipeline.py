@@ -197,6 +197,76 @@ def test_grid_failure_is_fatal_in_source_maintenance(
         )
 
 
+def test_source_maintenance_refreshes_interpolated_solar_cache(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = tmp_path / "interpolated-refresh.db"
+    config = load_config(CONFIG_PATH)
+    calls: list[str] = []
+
+    monkeypatch.setattr(
+        update_data_pipeline.solar_data_scheduler,
+        "ensure_ideal_solar_coverage",
+        lambda **kwargs: calls.append("ideal")
+        or SimpleNamespace(rows=1, regenerated=False),
+    )
+    monkeypatch.setattr(
+        update_data_pipeline.solar_data_scheduler.update_weather_cache,
+        "update_weather_cache",
+        lambda **kwargs: calls.append("weather")
+        or SimpleNamespace(
+            historical_rows_inserted=1,
+            forecast_rows_inserted=1,
+        ),
+    )
+    monkeypatch.setattr(
+        update_data_pipeline.solar_data_scheduler,
+        "ensure_historical_adjusted_solar_coverage",
+        lambda **kwargs: calls.append("historical")
+        or SimpleNamespace(rows=1, regenerated=False),
+    )
+    monkeypatch.setattr(
+        update_data_pipeline.solar_data_scheduler,
+        "regenerate_forecast_adjusted_solar",
+        lambda **kwargs: calls.append("forecast")
+        or SimpleNamespace(rows=1, regenerated=True),
+    )
+    monkeypatch.setattr(
+        update_data_pipeline.generate_grid_availability,
+        "run_grid_availability_generation",
+        lambda **kwargs: calls.append("grid")
+        or SimpleNamespace(availability_rows_inserted=1),
+    )
+    monkeypatch.setattr(
+        update_data_pipeline.solar_data_scheduler,
+        "run_full_interpolated_solar_cache_refresh",
+        lambda **kwargs: calls.append("interpolated")
+        or SimpleNamespace(
+            rows=2,
+            windows=1,
+            start_utc=FIXED_NOW,
+            end_utc=FIXED_NOW,
+        ),
+    )
+
+    update_data_pipeline.import_all_storage_models()
+    update_data_pipeline.create_db_and_tables(get_engine(_db_url(db_path)))
+
+    summary = update_data_pipeline.run_source_maintenance(
+        config_path=CONFIG_PATH,
+        database_url=_db_url(db_path),
+        config=config,
+        history_start=date(2025, 10, 6),
+        source_days_ahead=2,
+        grid_days_ahead=7,
+        now=FIXED_NOW,
+    )
+
+    assert calls == ["ideal", "weather", "historical", "forecast", "grid", "interpolated"]
+    assert summary.interpolated_solar_cache.rows == 2
+
+
 def test_source_coverage_failure_prevents_actual_system_generation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -306,11 +306,21 @@ def _load_payload(
         current_local.date(),
     )
     monthly_energy_wh = sum(point["energy_wh"] for point in monthly_energy)
+    monthly_economy = _monthly_load_economy_summary(
+        month_rows,
+        station_timezone,
+        current_local.date(),
+        config.station.economics.grid_tariff_uah_per_kwh,
+    )
     return {
         "current_power_w": load_point.total_load_power_w,
         "daily_energy_kwh": load_point.daily_energy_wh_so_far / 1000.0,
-        "solar_covered_percent": load_point.solar_covered_percent,
-        "money_saved_uah": load_point.money_saved_uah,
+        "solar_covered_percent": monthly_economy["solar_covered_percent"],
+        "money_saved_uah": monthly_economy["money_saved_uah"],
+        "monthly_solar_covered_percent": monthly_economy["solar_covered_percent"],
+        "monthly_money_saved_uah": monthly_economy["money_saved_uah"],
+        "daily_solar_covered_percent": load_point.solar_covered_percent,
+        "daily_money_saved_uah": load_point.money_saved_uah,
         "monthly_energy_kwh": monthly_energy_wh / 1000.0,
         "effective_served_load_w": load_point.effective_served_load_w,
         "load_cut_by_ems_w": load_point.load_cut_by_ems_w,
@@ -436,6 +446,43 @@ def _monthly_load_energy_points(
     ]
 
 
+def _monthly_load_economy_summary(
+    rows: Iterable[LoadCachePoint | LoadHistoryPoint],
+    station_timezone: ZoneInfo,
+    current_local_date: date,
+    tariff_uah_per_kwh: float,
+) -> dict[str, float]:
+    latest_energy_row_by_date: dict[date, LoadCachePoint | LoadHistoryPoint] = {}
+    for row in rows:
+        local_date = row.timestamp_utc.astimezone(station_timezone).date()
+        if local_date > current_local_date:
+            continue
+        existing = latest_energy_row_by_date.get(local_date)
+        if existing is None or row.daily_energy_wh_so_far >= existing.daily_energy_wh_so_far:
+            latest_energy_row_by_date[local_date] = row
+
+    total_load_energy_wh = 0.0
+    total_solar_covered_energy_wh = 0.0
+    for row in latest_energy_row_by_date.values():
+        daily_energy_wh = max(0.0, row.daily_energy_wh_so_far)
+        daily_solar_percent = _clamp(row.solar_covered_percent, 0.0, 100.0)
+        total_load_energy_wh += daily_energy_wh
+        total_solar_covered_energy_wh += daily_energy_wh * daily_solar_percent / 100.0
+
+    if total_load_energy_wh <= 0.0:
+        solar_percent = 0.0
+    else:
+        solar_percent = _clamp(
+            total_solar_covered_energy_wh / total_load_energy_wh * 100.0,
+            0.0,
+            100.0,
+        )
+    return {
+        "solar_covered_percent": solar_percent,
+        "money_saved_uah": total_solar_covered_energy_wh / 1000.0 * tariff_uah_per_kwh,
+    }
+
+
 def _battery_history_point_payload(
     row: BatteryCachePoint | BatteryHistoryPoint,
     station_timezone: ZoneInfo,
@@ -485,6 +532,10 @@ def _inverter_state(ems_point: EmsCachePoint | EmsHistoryPoint) -> str:
     if not ems_point.inverter_output_enabled:
         return "disabled"
     return "enabled"
+
+
+def _clamp(value: float, minimum: float, maximum: float) -> float:
+    return min(maximum, max(minimum, value))
 
 
 def _floor_utc_to_cadence(value: datetime, cadence_seconds: int) -> datetime:

@@ -26,11 +26,13 @@ DEFAULT_CONFIG_PATH = Path("backend/config/station.default.yaml")
 DEFAULT_DATABASE_URL = "sqlite:///backend/data/smartenergy.db"
 DEFAULT_LOCK_PATH = Path("backend/data/pipeline.lock")
 DEFAULT_INTERVAL_MINUTES = 360.0
+DEFAULT_SOLAR_CACHE_INTERVAL_MINUTES = 5.0
 DEFAULT_SOURCE_DAYS_AHEAD = update_data_pipeline.DEFAULT_SOURCE_DAYS_AHEAD
 DEFAULT_GRID_DAYS_AHEAD = update_data_pipeline.DEFAULT_GRID_DAYS_AHEAD
 
 
 PipelineRunner = Callable[..., object]
+CacheRunner = Callable[..., object]
 
 
 class PipelineLockHeld(RuntimeError):
@@ -51,6 +53,7 @@ class SchedulerSettings:
     allow_fallbacks: bool
     dry_run: bool
     interval_minutes: float
+    solar_cache_interval_minutes: float
     run_once: bool
     lock_path: Path
 
@@ -147,6 +150,12 @@ def parse_args(argv: Sequence[str] | None = None) -> SchedulerSettings:
         help="Main full pipeline interval. Default: 360 minutes.",
     )
     parser.add_argument(
+        "--solar-cache-interval-minutes",
+        type=float,
+        default=DEFAULT_SOLAR_CACHE_INTERVAL_MINUTES,
+        help="Fast interpolated solar cache refresh interval. Default: 5 minutes.",
+    )
+    parser.add_argument(
         "--run-once",
         action="store_true",
         help="Run one scheduler cycle and exit. Intended for smoke tests.",
@@ -165,6 +174,8 @@ def parse_args(argv: Sequence[str] | None = None) -> SchedulerSettings:
         parser.error("--grid-days-ahead must be 0 or greater")
     if args.interval_minutes <= 0:
         parser.error("--interval-minutes must be greater than 0")
+    if args.solar_cache_interval_minutes <= 0:
+        parser.error("--solar-cache-interval-minutes must be greater than 0")
 
     return SchedulerSettings(
         config=args.config,
@@ -176,6 +187,7 @@ def parse_args(argv: Sequence[str] | None = None) -> SchedulerSettings:
         allow_fallbacks=args.allow_fallbacks,
         dry_run=args.dry_run,
         interval_minutes=args.interval_minutes,
+        solar_cache_interval_minutes=args.solar_cache_interval_minutes,
         run_once=args.run_once,
         lock_path=args.lock_path,
     )
@@ -194,6 +206,7 @@ def run_scheduler(
         f"database_url={settings.database_url} "
         f"config={settings.config} "
         f"interval_minutes={settings.interval_minutes:g} "
+        f"solar_cache_interval_minutes={settings.solar_cache_interval_minutes:g} "
         f"run_once={settings.run_once} "
         f"dry_run={settings.dry_run} "
         f"full_history={settings.full_history} "
@@ -201,14 +214,32 @@ def run_scheduler(
         f"lock_path={settings.lock_path}"
     )
 
-    while not shutdown.is_set():
-        cycle_ok = run_pipeline_cycle(settings, pipeline_runner=runner)
-        if settings.run_once:
-            _log("data pipeline scheduler run-once mode exiting")
-            return 0 if cycle_ok else 1
+    cycle_ok = run_pipeline_cycle(settings, pipeline_runner=runner)
+    last_pipeline = time.monotonic()
+    last_solar_cache = last_pipeline if cycle_ok else 0.0
+    if settings.run_once:
+        _log("data pipeline scheduler run-once mode exiting")
+        return 0 if cycle_ok else 1
 
-        sleep_seconds = settings.interval_minutes * 60.0
-        _log(f"data pipeline scheduler sleeping for {sleep_seconds:g} seconds")
+    pipeline_interval_seconds = settings.interval_minutes * 60.0
+    solar_cache_interval_seconds = settings.solar_cache_interval_minutes * 60.0
+    while not shutdown.is_set():
+        now_monotonic = time.monotonic()
+        if now_monotonic - last_pipeline >= pipeline_interval_seconds:
+            cycle_ok = run_pipeline_cycle(settings, pipeline_runner=runner)
+            last_pipeline = time.monotonic()
+            if cycle_ok:
+                last_solar_cache = last_pipeline
+            continue
+
+        if now_monotonic - last_solar_cache >= solar_cache_interval_seconds:
+            run_solar_cache_cycle(settings)
+            last_solar_cache = time.monotonic()
+            continue
+
+        next_pipeline_seconds = pipeline_interval_seconds - (now_monotonic - last_pipeline)
+        next_cache_seconds = solar_cache_interval_seconds - (now_monotonic - last_solar_cache)
+        sleep_seconds = max(0.1, min(5.0, next_pipeline_seconds, next_cache_seconds))
         shutdown.wait(sleep_seconds)
 
     _log("data pipeline scheduler stopped")
@@ -256,6 +287,49 @@ def run_pipeline_cycle(
     return True
 
 
+def run_solar_cache_cycle(
+    settings: SchedulerSettings,
+    *,
+    cache_runner: CacheRunner | None = None,
+) -> bool:
+    runner = (
+        cache_runner
+        or update_data_pipeline.solar_data_scheduler.run_fast_interpolated_solar_cache_refresh
+    )
+    _log(
+        "interpolated solar cache refresh started "
+        f"database_url={settings.database_url} "
+        f"dry_run={settings.dry_run}"
+    )
+    if settings.dry_run:
+        _log("interpolated solar cache refresh dry-run skipped writes")
+        return True
+
+    cycle_started = time.monotonic()
+    try:
+        with PipelineFileLock(settings.lock_path):
+            summary = runner(settings.config, settings.database_url)
+    except PipelineLockHeld as exc:
+        _log_error(f"interpolated solar cache refresh skipped: {exc}")
+        return False
+    except Exception as exc:
+        _log_error(f"interpolated solar cache refresh failed: {exc}")
+        traceback.print_exc(file=sys.stderr)
+        sys.stderr.flush()
+        return False
+
+    duration_seconds = time.monotonic() - cycle_started
+    _log(
+        "interpolated solar cache refresh completed "
+        f"rows={getattr(summary, 'rows', 0)} "
+        f"windows={getattr(summary, 'windows', 0)} "
+        f"start_utc={_optional_iso(getattr(summary, 'start_utc', None))} "
+        f"end_utc={_optional_iso(getattr(summary, 'end_utc', None))} "
+        f"duration_seconds={duration_seconds:.2f}"
+    )
+    return True
+
+
 def _install_signal_handlers(stop_event: threading.Event) -> None:
     def request_shutdown(signum: int, frame: object) -> None:
         _log(f"data pipeline scheduler shutdown requested signal={signum}")
@@ -296,6 +370,10 @@ def _log_error(message: str) -> None:
 
 def _utc_timestamp() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _optional_iso(value: object) -> str:
+    return value.isoformat() if hasattr(value, "isoformat") else "none"
 
 
 if __name__ == "__main__":

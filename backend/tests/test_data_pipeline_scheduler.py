@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import sys
 import threading
+from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -90,6 +92,7 @@ def test_scheduler_cli_defaults_keep_fallbacks_disabled() -> None:
     settings = run_data_pipeline_scheduler.parse_args([])
 
     assert settings.interval_minutes == 360.0
+    assert settings.solar_cache_interval_minutes == 5.0
     assert settings.allow_fallbacks is False
     assert settings.full_history is False
     assert settings.dry_run is False
@@ -107,6 +110,8 @@ def test_scheduler_cli_accepts_explicit_fallbacks_and_interval(tmp_path: Path) -
             "--allow-fallbacks",
             "--interval-minutes",
             "15",
+            "--solar-cache-interval-minutes",
+            "2",
             "--db-path",
             str(db_path),
             "--lock-path",
@@ -116,8 +121,57 @@ def test_scheduler_cli_accepts_explicit_fallbacks_and_interval(tmp_path: Path) -
 
     assert settings.allow_fallbacks is True
     assert settings.interval_minutes == 15.0
+    assert settings.solar_cache_interval_minutes == 2.0
     assert settings.database_url == f"sqlite:///{db_path}"
     assert settings.lock_path == lock_path
+
+
+def test_scheduler_solar_cache_cycle_uses_lock_and_runner(tmp_path: Path) -> None:
+    calls: list[tuple[Path, str | None]] = []
+    db_path = tmp_path / "target.db"
+    lock_path = tmp_path / "target.lock"
+    settings = run_data_pipeline_scheduler.parse_args(
+        ["--db-path", str(db_path), "--lock-path", str(lock_path)]
+    )
+
+    def fake_cache(config: Path, database_url: str | None) -> object:
+        assert lock_path.exists()
+        calls.append((config, database_url))
+        return SimpleNamespace(
+            rows=3,
+            windows=1,
+            start_utc=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            end_utc=datetime(2026, 1, 1, 1, tzinfo=timezone.utc),
+        )
+
+    assert run_data_pipeline_scheduler.run_solar_cache_cycle(
+        settings,
+        cache_runner=fake_cache,
+    )
+    assert calls == [(settings.config, f"sqlite:///{db_path}")]
+    assert not lock_path.exists()
+
+
+def test_scheduler_solar_cache_cycle_dry_run_does_not_call_runner(
+    tmp_path: Path,
+) -> None:
+    calls = 0
+    lock_path = tmp_path / "target.lock"
+    settings = run_data_pipeline_scheduler.parse_args(
+        ["--dry-run", "--lock-path", str(lock_path)]
+    )
+
+    def fake_cache(config: Path, database_url: str | None) -> object:
+        nonlocal calls
+        calls += 1
+        return object()
+
+    assert run_data_pipeline_scheduler.run_solar_cache_cycle(
+        settings,
+        cache_runner=fake_cache,
+    )
+    assert calls == 0
+    assert not lock_path.exists()
 
 
 def test_compose_uses_data_scheduler_not_weather_scheduler() -> None:

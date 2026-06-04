@@ -66,6 +66,7 @@ class SourceMaintenanceSummary:
     historical_adjusted_solar: solar_data_scheduler.AdjustedSolarMaintenanceSummary
     forecast_adjusted_solar: solar_data_scheduler.AdjustedSolarMaintenanceSummary
     grid_availability: generate_grid_availability.GridGenerationSummary
+    interpolated_solar_cache: solar_data_scheduler.InterpolatedCacheSummary
 
 
 @dataclass(frozen=True)
@@ -403,6 +404,11 @@ def run_source_maintenance(
         seed=config.station.grid.outage_schedule_seed,
         now=now,
     )
+    interpolated_summary = solar_data_scheduler.run_full_interpolated_solar_cache_refresh(
+        config_path=config_path,
+        database_url=database_url,
+        now=now,
+    )
     return SourceMaintenanceSummary(
         station_id=station_id,
         config_hash=config_hash,
@@ -413,6 +419,7 @@ def run_source_maintenance(
         historical_adjusted_solar=historical_summary,
         forecast_adjusted_solar=forecast_summary,
         grid_availability=grid_summary,
+        interpolated_solar_cache=interpolated_summary,
     )
 
 
@@ -561,6 +568,7 @@ def print_data_pipeline_summary(summary: DataPipelineSummary) -> None:
         f"source_historical_solar_rows={_source_rows(source, 'historical_adjusted_solar')} "
         f"source_forecast_solar_rows={_source_rows(source, 'forecast_adjusted_solar')} "
         f"grid_rows_inserted={_grid_rows(source)} "
+        f"interpolated_solar_rows={_source_rows(source, 'interpolated_solar_cache')} "
         f"validated_historical_solar_rows={0 if coverage is None else coverage.historical_solar_rows} "
         f"validated_forecast_solar_rows={0 if coverage is None else coverage.forecast_solar_rows} "
         f"validated_grid_missing_points={0 if coverage is None else coverage.grid_missing_points} "

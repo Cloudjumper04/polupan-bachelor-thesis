@@ -84,8 +84,12 @@ def test_system_dashboard_endpoint_returns_frontend_ready_payload(
 
     assert payload["load"]["current_power_w"] == 320.0
     assert payload["load"]["daily_energy_kwh"] == 1.2
-    assert payload["load"]["solar_covered_percent"] == 55.0
-    assert payload["load"]["money_saved_uah"] == 2.25
+    assert payload["load"]["solar_covered_percent"] == pytest.approx(44.673913)
+    assert payload["load"]["money_saved_uah"] == pytest.approx(17.7552)
+    assert payload["load"]["monthly_solar_covered_percent"] == pytest.approx(44.673913)
+    assert payload["load"]["monthly_money_saved_uah"] == pytest.approx(17.7552)
+    assert payload["load"]["daily_solar_covered_percent"] == 55.0
+    assert payload["load"]["daily_money_saved_uah"] == 2.25
     assert payload["load"]["monthly_energy_kwh"] == 9.2
     assert payload["load"]["power_24h"]
     assert payload["load"]["monthly_energy"] == [
