@@ -1088,6 +1088,23 @@ function mapEmsModuleData(apiEms, fallback) {
     riskScore: clampNumber(apiEms.risk_score, fallback.riskScore, 0, 100),
     titleTooltip: apiEms.title_tooltip ?? fallback.titleTooltip,
     riskTooltip: apiEms.risk_tooltip ?? fallback.riskTooltip,
+    flow: {
+      grid_to_load_w: readNumber(flow.grid_to_load_w, 0),
+      grid_to_battery_w: readNumber(flow.grid_to_battery_w, 0),
+      solar_to_load_w: readNumber(flow.solar_to_load_w, 0),
+      solar_to_battery_w: readNumber(flow.solar_to_battery_w, 0),
+      battery_to_load_w: readNumber(flow.battery_to_load_w, 0),
+      battery_net_power_w: readNumber(flow.battery_net_power_w, 0),
+      effective_load_power_w: readNumber(
+        flow.effective_load_power_w ?? flow.load_power_w,
+        0,
+      ),
+      curtailed_or_cut_load_w: readNumber(flow.curtailed_or_cut_load_w, 0),
+    },
+    rawMetrics: {
+      inverter_output_enabled: metrics.inverter_output_enabled !== false,
+      protection_active: metrics.protection_active === true,
+    },
     nodes: {
       grid: {
         ...fallback.nodes.grid,

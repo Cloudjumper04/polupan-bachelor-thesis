@@ -16,6 +16,14 @@ const NODE_ICONS = {
   load: Home,
 };
 
+const POWER_ACTIVE_THRESHOLD_W = 0.5;
+const FLOW_PATHS = {
+  grid: "M164 42 H285 Q301 42 301 58 V82 Q301 98 317 98 H334",
+  solar: "M164 115 H334",
+  load: "M426 115 H582",
+  battery: "M382 160 V176 Q382 192 366 192 H164",
+};
+
 export default function EmsModule({ data = emsMockData }) {
   const [controlMode, setControlMode] = useState(data.initialControlMode);
   const [manualModeId, setManualModeId] = useState(data.manualModeId);
@@ -32,6 +40,12 @@ export default function EmsModule({ data = emsMockData }) {
       ? modeById.get(data.autoModeId)
       : modeById.get(manualModeId);
   const modeLocked = controlMode === "auto";
+  const flow = useMemo(() => normalizeFlow(data), [data]);
+  const rawMetrics = normalizeRawMetrics(data);
+  const gridLineState = getGridLineState(flow);
+  const solarLineState = getSolarLineState(flow);
+  const batteryLineState = getBatteryLineState(flow);
+  const loadLineState = getLoadLineState(flow, rawMetrics);
 
   useEffect(() => {
     if (controlMode === previousInitialControlMode.current) {
@@ -149,36 +163,10 @@ export default function EmsModule({ data = emsMockData }) {
       <div className="ems-body">
         <section className="ems-flow" aria-label="Схема потоків енергії">
           <svg className="ems-flow-svg" viewBox="0 0 760 230" preserveAspectRatio="none" aria-hidden="true">
-            <path
-              className="ems-flow-line grid"
-              d="M164 42 H285 Q301 42 301 58 V82 Q301 98 317 98 H334"
-              vectorEffect="non-scaling-stroke"
-            />
-            <path
-              className="ems-flow-line solar"
-              d="M164 115 H334"
-              vectorEffect="non-scaling-stroke"
-            />
-            <path
-              className="ems-flow-line dual-grid"
-              d="M426 115 H582"
-              vectorEffect="non-scaling-stroke"
-            />
-            <path
-              className="ems-flow-line dual-solar"
-              d="M426 115 H582"
-              vectorEffect="non-scaling-stroke"
-            />
-            <path
-              className="ems-flow-line dual-grid"
-              d="M382 160 V176 Q382 192 366 192 H164"
-              vectorEffect="non-scaling-stroke"
-            />
-            <path
-              className="ems-flow-line dual-solar"
-              d="M382 160 V176 Q382 192 366 192 H164"
-              vectorEffect="non-scaling-stroke"
-            />
+            {renderFlowLine("grid", gridLineState)}
+            {renderFlowLine("solar", solarLineState)}
+            {renderFlowLine("load", loadLineState)}
+            {renderFlowLine("battery", batteryLineState)}
           </svg>
 
           <EnergyNode type="grid" node={data.nodes.grid} />
@@ -203,6 +191,186 @@ export default function EmsModule({ data = emsMockData }) {
       </div>
     </section>
   );
+}
+
+function renderFlowLine(pathId, state) {
+  const path = FLOW_PATHS[pathId];
+  const sources = state.sources.length > 0 ? state.sources : ["inactive"];
+
+  return sources.map((source, index) => (
+    <path
+      key={`${pathId}-${source}-${index}`}
+      className={flowLineClass(state, source, index)}
+      d={path}
+      vectorEffect="non-scaling-stroke"
+    />
+  ));
+}
+
+function getGridLineState(flow) {
+  if (isActivePower(flow.grid_to_load_w) || isActivePower(flow.grid_to_battery_w)) {
+    return singleSourceLine("grid", "to-inverter");
+  }
+  return inactiveLine();
+}
+
+function getSolarLineState(flow) {
+  if (isActivePower(flow.solar_to_load_w) || isActivePower(flow.solar_to_battery_w)) {
+    return singleSourceLine("solar", "to-inverter");
+  }
+  return inactiveLine();
+}
+
+function getBatteryLineState(flow) {
+  const batteryDischarging =
+    isActivePower(flow.battery_to_load_w) || flow.battery_net_power_w < -POWER_ACTIVE_THRESHOLD_W;
+  const gridCharging = isActivePower(flow.grid_to_battery_w);
+  const solarCharging = isActivePower(flow.solar_to_battery_w);
+
+  if (batteryDischarging) {
+    return singleSourceLine("battery", "to-inverter");
+  }
+  if (gridCharging && solarCharging) {
+    return mixedSourceLine(["grid", "solar"], "to-battery");
+  }
+  if (gridCharging) {
+    return singleSourceLine("grid", "to-battery");
+  }
+  if (solarCharging) {
+    return singleSourceLine("solar", "to-battery");
+  }
+  return inactiveLine();
+}
+
+function getLoadLineState(flow, rawMetrics) {
+  const loadCutByProtection =
+    rawMetrics.protection_active && isActivePower(flow.curtailed_or_cut_load_w);
+  const loadReceivesPower =
+    isActivePower(flow.effective_load_power_w) &&
+    rawMetrics.inverter_output_enabled !== false &&
+    !loadCutByProtection;
+
+  if (!loadReceivesPower) {
+    return inactiveLine();
+  }
+
+  const sources = [];
+  if (isActivePower(flow.grid_to_load_w)) sources.push("grid");
+  if (isActivePower(flow.solar_to_load_w)) sources.push("solar");
+  if (isActivePower(flow.battery_to_load_w)) sources.push("battery");
+
+  if (sources.length === 0) return inactiveLine();
+  if (sources.length === 1) return singleSourceLine(sources[0], "to-load");
+  return mixedSourceLine(sources, "to-load");
+}
+
+function inactiveLine() {
+  return { sources: ["inactive"], direction: "none", mixed: false };
+}
+
+function singleSourceLine(source, direction) {
+  return { sources: [source], direction, mixed: false };
+}
+
+function mixedSourceLine(sources, direction) {
+  return { sources, direction, mixed: true };
+}
+
+function flowLineClass(state, source, index) {
+  const classes = ["ems-flow-line", `flow-${source}`, `flow-${state.direction}`];
+  if (source === "inactive") {
+    classes.push("flow-inactive");
+  }
+  if (state.mixed) {
+    classes.push(
+      "flow-mixed",
+      `flow-layer-${index + 1}`,
+      mixedFlowClassName(state.sources),
+    );
+  }
+  return classes.join(" ");
+}
+
+function mixedFlowClassName(sources) {
+  const key = ["battery", "grid", "solar"]
+    .filter((source) => sources.includes(source))
+    .join("-");
+  return `flow-mixed-${key}`;
+}
+
+function normalizeFlow(data) {
+  const fallback = inferFlowFromDisplayData(data);
+  const raw = data.flow ?? {};
+  return {
+    grid_to_load_w: readFlowNumber(raw.grid_to_load_w, fallback.grid_to_load_w),
+    grid_to_battery_w: readFlowNumber(raw.grid_to_battery_w, fallback.grid_to_battery_w),
+    solar_to_load_w: readFlowNumber(raw.solar_to_load_w, fallback.solar_to_load_w),
+    solar_to_battery_w: readFlowNumber(
+      raw.solar_to_battery_w,
+      fallback.solar_to_battery_w,
+    ),
+    battery_to_load_w: readFlowNumber(raw.battery_to_load_w, fallback.battery_to_load_w),
+    battery_net_power_w: readFlowNumber(
+      raw.battery_net_power_w,
+      fallback.battery_net_power_w,
+    ),
+    effective_load_power_w: readFlowNumber(
+      raw.effective_load_power_w,
+      fallback.effective_load_power_w,
+    ),
+    curtailed_or_cut_load_w: readFlowNumber(raw.curtailed_or_cut_load_w, 0),
+  };
+}
+
+function inferFlowFromDisplayData(data) {
+  const gridPowerW = Math.max(0, parseDisplayPowerW(data.nodes?.grid?.value));
+  const solarPowerW = Math.max(0, parseDisplayPowerW(data.nodes?.solar?.value));
+  const batteryNetPowerW = parseDisplayPowerW(data.nodes?.battery?.value);
+  const loadPowerW = Math.max(0, parseDisplayPowerW(data.nodes?.load?.value));
+  const chargingPowerW = Math.max(0, batteryNetPowerW);
+  const dischargingPowerW = Math.max(0, -batteryNetPowerW);
+  const solarToBatteryW = Math.min(chargingPowerW, solarPowerW);
+  const gridToBatteryW = Math.max(0, chargingPowerW - solarToBatteryW);
+  const solarToLoadW = Math.max(0, solarPowerW - solarToBatteryW);
+  const remainingLoadW = Math.max(0, loadPowerW - solarToLoadW);
+  const gridToLoadW = Math.min(gridPowerW, remainingLoadW);
+
+  return {
+    grid_to_load_w: gridToLoadW,
+    grid_to_battery_w: gridToBatteryW,
+    solar_to_load_w: solarToLoadW,
+    solar_to_battery_w: solarToBatteryW,
+    battery_to_load_w: dischargingPowerW,
+    battery_net_power_w: batteryNetPowerW,
+    effective_load_power_w: loadPowerW,
+    curtailed_or_cut_load_w: 0,
+  };
+}
+
+function normalizeRawMetrics(data) {
+  const raw = data.rawMetrics ?? {};
+  return {
+    inverter_output_enabled: raw.inverter_output_enabled !== false,
+    protection_active: raw.protection_active === true,
+  };
+}
+
+function isActivePower(value) {
+  return readFlowNumber(value, 0) > POWER_ACTIVE_THRESHOLD_W;
+}
+
+function readFlowNumber(value, fallback) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+function parseDisplayPowerW(value) {
+  const text = `${value ?? ""}`.replace(",", ".");
+  const match = text.match(/([+-]?\d+(?:\.\d+)?)\s*(kW|W)\b/i);
+  if (!match) return 0;
+  const numeric = Number(match[1]);
+  if (!Number.isFinite(numeric)) return 0;
+  return match[2].toLowerCase() === "kw" ? numeric * 1000 : numeric;
 }
 
 function EnergyNode({ type, node }) {

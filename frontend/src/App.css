@@ -1064,36 +1064,52 @@ svg text {
   opacity: 0.96;
 }
 
-.ems-flow-line.grid {
+.ems-flow-line.flow-grid {
   stroke: var(--ems-grid-blue);
 }
 
-.ems-flow-line.solar {
+.ems-flow-line.flow-solar {
   stroke: var(--ems-solar-yellow);
 }
 
-.ems-flow-line.battery {
+.ems-flow-line.flow-battery {
   stroke: var(--ems-battery-green);
 }
 
-.ems-flow-line.idle {
+.ems-flow-line.flow-inactive {
   stroke: rgba(0, 0, 0, 0.2);
+  opacity: 0.58;
 }
 
-.ems-flow-line.dual-grid,
-.ems-flow-line.dual-solar {
-  stroke-dasharray: 14 14;
-  stroke-width: 4;
+.ems-flow-line.flow-mixed {
+  stroke-dasharray: 14 28;
+  stroke-width: 4.2;
+  animation-duration: 1.15s;
+  animation-iteration-count: infinite;
+  animation-timing-function: linear;
 }
 
-.ems-flow-line.dual-grid {
-  stroke: var(--ems-grid-blue);
-  animation: ems-flow-dash-grid 1.15s linear infinite;
+.ems-flow-line.flow-mixed-grid-solar,
+.ems-flow-line.flow-mixed-battery-solar,
+.ems-flow-line.flow-mixed-battery-grid,
+.ems-flow-line.flow-mixed-battery-grid-solar {
+  opacity: 0.98;
 }
 
-.ems-flow-line.dual-solar {
-  stroke: var(--ems-solar-yellow);
-  animation: ems-flow-dash-solar 1.15s linear infinite;
+.ems-flow-line.flow-layer-1 {
+  animation-name: ems-flow-dash-layer-1;
+}
+
+.ems-flow-line.flow-layer-2 {
+  animation-name: ems-flow-dash-layer-2;
+}
+
+.ems-flow-line.flow-layer-3 {
+  animation-name: ems-flow-dash-layer-3;
+}
+
+.ems-flow-line.flow-to-inverter.flow-mixed {
+  animation-direction: reverse;
 }
 
 .ems-flow-node {
@@ -1478,18 +1494,27 @@ svg text {
   font-weight: 800;
 }
 
-@keyframes ems-flow-dash-grid {
+@keyframes ems-flow-dash-layer-1 {
   from {
     stroke-dashoffset: 0;
+  }
+  to {
+    stroke-dashoffset: -42;
+  }
+}
+
+@keyframes ems-flow-dash-layer-2 {
+  from {
+    stroke-dashoffset: 14;
   }
   to {
     stroke-dashoffset: -28;
   }
 }
 
-@keyframes ems-flow-dash-solar {
+@keyframes ems-flow-dash-layer-3 {
   from {
-    stroke-dashoffset: 14;
+    stroke-dashoffset: 28;
   }
   to {
     stroke-dashoffset: -14;
