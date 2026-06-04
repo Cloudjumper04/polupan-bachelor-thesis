@@ -183,6 +183,21 @@ def get_latest_load_cache_point(
     )
 
 
+def get_latest_load_history_point(
+    session: Session,
+    station_id: str,
+    config_hash: str,
+    at_or_before_utc: datetime | None = None,
+) -> LoadHistoryPoint | None:
+    return _latest_point(
+        session,
+        LoadHistoryPoint,
+        station_id,
+        config_hash,
+        at_or_before_utc,
+    )
+
+
 def encode_event_tags(tags: tuple[str, ...] | list[str] | set[str] | None) -> str | None:
     if not tags:
         return None

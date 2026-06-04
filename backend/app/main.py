@@ -14,6 +14,7 @@ from fastapi import FastAPI
 from sqlalchemy.exc import OperationalError
 from sqlmodel import Session
 
+from app.api.system_dashboard import router as system_dashboard_router
 from app.config_loader import calculate_config_hash, load_config
 from app.schemas import AppConfig
 from app.simulation.solar import estimate_pv_array_operating_point
@@ -69,6 +70,7 @@ WEATHER_LABELS_UK = {
 
 
 app = FastAPI(title="SmartEnergy Lab API")
+app.include_router(system_dashboard_router)
 
 
 @dataclass(frozen=True)

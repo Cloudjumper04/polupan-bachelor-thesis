@@ -214,6 +214,21 @@ def get_latest_ems_cache_point(
     )
 
 
+def get_latest_ems_history_point(
+    session: Session,
+    station_id: str,
+    config_hash: str,
+    at_or_before_utc: datetime | None = None,
+) -> EmsHistoryPoint | None:
+    return _latest_point(
+        session,
+        EmsHistoryPoint,
+        station_id,
+        config_hash,
+        at_or_before_utc,
+    )
+
+
 def _save_points(
     session: Session,
     points: list[Any],
