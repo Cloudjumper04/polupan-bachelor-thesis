@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import sys
 from dataclasses import dataclass
-from datetime import datetime, time as datetime_time, timezone
+from datetime import date, datetime, time as datetime_time, timezone
 from pathlib import Path
 from typing import Sequence
 from zoneinfo import ZoneInfo
@@ -69,6 +69,7 @@ def main() -> None:
             database_url=_database_url_from_args(args),
             start_utc=args.start,
             end_utc=args.end,
+            history_start_date=args.history_start,
             cache_only=args.cache_only,
             load_days_ahead=args.load_days_ahead,
             battery_days_ahead=args.battery_days_ahead,
@@ -118,6 +119,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH)
     parser.add_argument("--database-url", default=DEFAULT_DATABASE_URL)
     parser.add_argument("--db-path", type=Path, default=None)
+    parser.add_argument(
+        "--history-start",
+        type=_parse_date,
+        default=None,
+        help="Override station.installation_date for default full-history generation.",
+    )
     parser.add_argument("--start", type=_parse_datetime, default=None)
     parser.add_argument("--end", type=_parse_datetime, default=None)
     parser.set_defaults(cache_only=True)
@@ -131,7 +138,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--full-history",
         dest="cache_only",
         action="store_false",
-        help="Use station.installation_date as the historical start fallback.",
+        help="Write history from --history-start or station.installation_date plus cache.",
     )
     parser.add_argument("--load-days-ahead", type=int, default=DEFAULT_LOAD_DAYS_AHEAD)
     parser.add_argument(
@@ -164,6 +171,7 @@ def run_system_simulation_generation(
     *,
     start_utc: datetime | None = None,
     end_utc: datetime | None = None,
+    history_start_date: date | None = None,
     cache_only: bool = True,
     load_days_ahead: int = DEFAULT_LOAD_DAYS_AHEAD,
     battery_days_ahead: int = DEFAULT_BATTERY_DAYS_AHEAD,
@@ -192,6 +200,7 @@ def run_system_simulation_generation(
         resolved_now,
         start_utc=start_utc,
         end_utc=end_utc,
+        history_start_date=history_start_date,
         history_enabled=history_enabled,
         load_days_ahead=load_days_ahead,
         battery_days_ahead=battery_days_ahead,
@@ -263,6 +272,7 @@ def _build_windows(
     *,
     start_utc: datetime | None,
     end_utc: datetime | None,
+    history_start_date: date | None,
     history_enabled: bool,
     load_days_ahead: int,
     battery_days_ahead: int,
@@ -296,7 +306,11 @@ def _build_windows(
             history_enabled=False,
         )
 
-    install_start = _station_installation_start_utc(config, timezone_info)
+    install_start = _station_installation_start_utc(
+        config,
+        timezone_info,
+        history_start_date=history_start_date,
+    )
     default_cache = build_default_system_simulation_windows(
         now_utc,
         timezone_info,
@@ -321,8 +335,10 @@ def _build_windows(
 def _station_installation_start_utc(
     config: AppConfig,
     timezone_info: ZoneInfo,
+    *,
+    history_start_date: date | None = None,
 ) -> datetime:
-    install_date = datetime.strptime(
+    install_date = history_start_date or datetime.strptime(
         config.station.installation_date,
         "%Y-%m-%d",
     ).date()
@@ -356,6 +372,10 @@ def _parse_datetime(value: str) -> datetime:
     normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
     parsed = datetime.fromisoformat(normalized)
     return _as_utc(parsed)
+
+
+def _parse_date(value: str) -> date:
+    return date.fromisoformat(value)
 
 
 def _persisted_rows(summary: SystemGenerationSummary, field_name: str) -> int:
