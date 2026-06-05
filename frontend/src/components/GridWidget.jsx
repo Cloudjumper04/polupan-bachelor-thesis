@@ -27,7 +27,10 @@ const FALLBACK_GRID_CURRENT = {
   reason: "generation bottleneck",
 };
 
-export default function GridWidget({ stationTimezone: sharedStationTimezone = null }) {
+export default function GridWidget({
+  stationTimezone: sharedStationTimezone = null,
+  selectedDashboardTime = null,
+}) {
   const [expanded, setExpanded] = useState(false);
   const [chartIndex, setChartIndex] = useState(0);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -61,9 +64,18 @@ export default function GridWidget({ stationTimezone: sharedStationTimezone = nu
     sharedStationTimezone ??
     "Europe/Kyiv";
   const stationClock = useStationClock(stationTimezone);
-  const todayKey = stationClock.dateKey;
-  const currentHour = stationClock.hourFloat;
-  const currentTimeLabel = stationClock.timeLabel;
+  const historyMode = Boolean(selectedDashboardTime);
+  const selectedClock = useMemo(
+    () =>
+      historyMode
+        ? selectedClockParts(selectedDashboardTime, stationTimezone)
+        : null,
+    [historyMode, selectedDashboardTime, stationTimezone],
+  );
+  const dashboardClock = selectedClock ?? stationClock;
+  const todayKey = dashboardClock.dateKey;
+  const currentHour = dashboardClock.hourFloat;
+  const currentTimeLabel = dashboardClock.timeLabel;
   const weekStartKey = startOfWeekKey(todayKey);
   const weekEndKey = addDaysToDateKey(weekStartKey, 6);
   const queueLabel =
@@ -108,8 +120,12 @@ export default function GridWidget({ stationTimezone: sharedStationTimezone = nu
     const controller = new AbortController();
 
     async function loadCurrent() {
+      setCurrentStatus("loading");
       try {
-        const payload = await fetchGridCurrent({ signal: controller.signal });
+        const payload = await fetchGridCurrent({
+          at: selectedDashboardTime,
+          signal: controller.signal,
+        });
         setCurrentPayload(payload);
         setCurrentStatus(payload?.current ? "ready" : "empty");
         setCurrentError("");
@@ -122,18 +138,18 @@ export default function GridWidget({ stationTimezone: sharedStationTimezone = nu
     }
 
     loadCurrent();
-    const timer = window.setInterval(loadCurrent, GRID_REFRESH_MS);
+    const timer = historyMode ? null : window.setInterval(loadCurrent, GRID_REFRESH_MS);
     return () => {
       controller.abort();
-      window.clearInterval(timer);
+      if (timer) window.clearInterval(timer);
     };
-  }, []);
+  }, [historyMode, selectedDashboardTime]);
 
   useEffect(() => {
-    setDisplayVoltage(calculateDisplayVoltage(visibleCurrent, gridOn, stationClock.nowMs));
+    setDisplayVoltage(calculateDisplayVoltage(visibleCurrent, gridOn, dashboardClock.nowMs));
   }, [
     gridOn,
-    stationClock.nowMs,
+    dashboardClock.nowMs,
     visibleCurrent.deficit_percent,
     visibleCurrent.grid_voltage_v,
     visibleCurrent.national_deficit_percent,
@@ -1070,6 +1086,23 @@ function lineTooltipValue(value, unit) {
 
 function firstOutageQueue(outagesByDate) {
   return Object.values(outagesByDate).find((payload) => payload?.outage_queue)?.outage_queue;
+}
+
+function selectedClockParts(value, timezone) {
+  const match = `${value ?? ""}`.match(
+    /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?/,
+  );
+  if (!match) return null;
+  const hour = Number(match[2]);
+  const minute = Number(match[3]);
+  const second = Number(match[4] ?? 0);
+  return {
+    nowMs: Date.parse(`${match[1]}T${match[2]}:${match[3]}:${pad(second)}`),
+    dateKey: match[1],
+    timeLabel: `${pad(hour)}:${pad(minute)}`,
+    hourFloat: hour + minute / 60 + second / 3600,
+    timezone,
+  };
 }
 
 function localIsoParts(value) {

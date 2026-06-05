@@ -9,6 +9,15 @@ async function requestSystem(path, { signal } = {}) {
   return response.json();
 }
 
-export function fetchSystemDashboard(options) {
-  return requestSystem("/api/system/dashboard", options);
+export function fetchSystemDashboard({ at = null, signal } = {}) {
+  const params = new URLSearchParams();
+  if (at) params.set("at", at);
+  const query = params.toString();
+  return requestSystem(`/api/system/dashboard${query ? `?${query}` : ""}`, {
+    signal,
+  });
+}
+
+export function fetchDashboardRange(options) {
+  return requestSystem("/api/dashboard/range", options);
 }

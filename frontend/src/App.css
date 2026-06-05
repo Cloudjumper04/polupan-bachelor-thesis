@@ -1528,6 +1528,75 @@ svg text {
 
 .footer-inner {
   height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+}
+
+.dashboard-history-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.dashboard-history-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  font-size: 11px;
+  font-weight: 850;
+  color: rgba(0, 0, 0, 0.76);
+}
+
+.dashboard-history-field span {
+  white-space: nowrap;
+}
+
+.dashboard-history-field input {
+  width: 230px;
+  height: 27px;
+  border: 1px solid rgba(0, 0, 0, 0.22);
+  border-radius: 8px;
+  padding: 3px 7px;
+  background: rgba(255, 255, 255, 0.82);
+  color: var(--black);
+  font-family: var(--font);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.dashboard-history-apply,
+.dashboard-history-return {
+  height: 27px;
+  border: 1px solid rgba(0, 0, 0, 0.22);
+  border-radius: 999px;
+  padding: 0 11px;
+  font-family: var(--font);
+  font-size: 11px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.dashboard-history-apply {
+  background: var(--black);
+  color: var(--yellow);
+}
+
+.dashboard-history-return {
+  background: rgba(255, 255, 255, 0.82);
+  color: var(--black);
+}
+
+.dashboard-history-error {
+  max-width: 360px;
+  overflow: hidden;
+  color: #7f1d1d;
+  font-size: 11px;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .grid-card {
@@ -2373,6 +2442,25 @@ svg text {
   .page {
     padding-left: 14px;
     padding-right: 14px;
+  }
+
+  .site-footer,
+  .footer-inner {
+    height: auto;
+    min-height: 42px;
+  }
+
+  .dashboard-history-controls {
+    flex-wrap: wrap;
+    padding: 6px 0;
+  }
+
+  .dashboard-history-field {
+    width: 100%;
+  }
+
+  .dashboard-history-field input {
+    width: min(100%, 250px);
   }
 
   .solar-card {

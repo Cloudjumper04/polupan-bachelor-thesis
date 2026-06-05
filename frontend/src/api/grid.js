@@ -9,8 +9,11 @@ async function requestGrid(path, { signal } = {}) {
   return response.json();
 }
 
-export function fetchGridCurrent(options) {
-  return requestGrid("/api/grid/current", options);
+export function fetchGridCurrent({ at = null, signal } = {}) {
+  const params = new URLSearchParams();
+  if (at) params.set("at", at);
+  const query = params.toString();
+  return requestGrid(`/api/grid/current${query ? `?${query}` : ""}`, { signal });
 }
 
 export function fetchGridOutages(dateKey, options) {

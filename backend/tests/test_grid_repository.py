@@ -8,6 +8,8 @@ from zoneinfo import ZoneInfo
 
 from sqlmodel import Session
 
+from app.config_loader import load_config
+from app.main import get_grid_current
 from app.storage.database import create_db_and_tables, get_engine
 from app.storage.grid_repository import (
     GridAvailabilityPointRecord,
@@ -145,6 +147,31 @@ def test_generate_grid_availability_small_range_uses_temp_database(
     assert summary.availability_rows_inserted == 48
     assert second_summary.availability_rows_inserted == 0
     assert len(rows) == 48
+
+
+def test_grid_current_accepts_at_alias(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    database_url = _database_url(tmp_path)
+    config = load_config(CONFIG_PATH)
+    engine = get_engine(database_url)
+    create_db_and_tables(engine)
+    timestamp = datetime(2026, 1, 1, 10, 0, tzinfo=timezone.utc)
+    with Session(engine) as session:
+        save_grid_availability_points(session, [_point(timestamp, voltage=221.0)])
+    monkeypatch.setenv("SMARTENERGY_DATABASE_URL", database_url)
+    monkeypatch.setenv("SMARTENERGY_CONFIG_PATH", str(CONFIG_PATH))
+
+    payload = get_grid_current(at=timestamp + timedelta(minutes=12))
+
+    assert payload["status"] == "ok"
+    assert payload["station"]["id"] == config.station.id
+    assert payload["requested_at_utc"] == (
+        timestamp + timedelta(minutes=12)
+    ).isoformat()
+    assert payload["resolved_at_utc"] == timestamp.isoformat()
+    assert payload["current"]["grid_voltage_v"] == 221.0
 
 
 def _point(

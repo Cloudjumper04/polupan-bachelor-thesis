@@ -10,7 +10,7 @@ from sqlmodel import Session
 
 from app.config_loader import calculate_system_config_hash, load_config
 from app.main import app
-from app.api.system_dashboard import get_system_dashboard
+from app.api.system_dashboard import get_dashboard_range, get_system_dashboard
 from app.storage.battery_repository import (
     BatteryCachePoint,
     BatteryHistoryPoint,
@@ -32,6 +32,14 @@ from app.storage.load_repository import (
     save_load_cache_points,
     save_load_history_points,
 )
+from app.storage.grid_repository import (
+    GridAvailabilityPointRecord,
+    save_grid_availability_points,
+)
+from app.storage.simulated_solar_repository import (
+    SimulatedSolarProduction,
+    save_simulated_solar_points,
+)
 
 
 CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "station.default.yaml"
@@ -41,6 +49,7 @@ NOW = datetime(2026, 6, 4, 12, 0, tzinfo=timezone.utc)
 
 def test_system_dashboard_route_is_registered() -> None:
     assert any(route.path == "/api/system/dashboard" for route in app.routes)
+    assert any(route.path == "/api/dashboard/range" for route in app.routes)
 
 
 def test_system_dashboard_endpoint_returns_frontend_ready_payload(
@@ -59,6 +68,13 @@ def test_system_dashboard_endpoint_returns_frontend_ready_payload(
     payload = get_system_dashboard(at=NOW)
     assert payload["station_id"] == config.station.id
     assert payload["timestamp_utc"] == NOW.isoformat()
+    assert payload["requested_at_utc"] == NOW.isoformat()
+    assert payload["resolved_at_utc"] == NOW.isoformat()
+    assert payload["module_timestamps"] == {
+        "load": NOW.isoformat(),
+        "battery": NOW.isoformat(),
+        "ems": NOW.isoformat(),
+    }
 
     assert payload["ems"]["selected_mode"] == "backup_reserve"
     assert payload["ems"]["selected_mode_frontend_id"] == "battery_reserve"
@@ -150,6 +166,63 @@ def test_system_dashboard_missing_data_returns_404(
     assert exc_info.value.status_code == 404
     assert exc_info.value.detail["message"] == "System dashboard data is not available"
     assert set(exc_info.value.detail["missing"]) == {"load", "battery", "ems"}
+
+
+def test_system_dashboard_at_outside_available_range_returns_404(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_url = f"sqlite:///{tmp_path / 'system-dashboard-range-error.db'}"
+    config = load_config(CONFIG_PATH)
+    config_hash = calculate_system_config_hash(config)
+    engine = get_engine(database_url)
+    create_db_and_tables(engine)
+    _seed_system_rows(engine, config.station.id, config_hash)
+    monkeypatch.setenv("SMARTENERGY_DATABASE_URL", database_url)
+    monkeypatch.setenv("SMARTENERGY_CONFIG_PATH", str(CONFIG_PATH))
+
+    with pytest.raises(HTTPException) as exc_info:
+        get_system_dashboard(at=NOW + timedelta(days=1))
+
+    assert exc_info.value.status_code == 404
+    assert "requested time" in exc_info.value.detail["message"]
+    assert exc_info.value.detail["available_end_utc"] == NOW.isoformat()
+
+
+def test_dashboard_range_endpoint_returns_conservative_range(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_url = f"sqlite:///{tmp_path / 'dashboard-range.db'}"
+    config = load_config(CONFIG_PATH)
+    system_hash = calculate_system_config_hash(config)
+    engine = get_engine(database_url)
+    create_db_and_tables(engine)
+    _seed_system_rows(engine, config.station.id, system_hash)
+    with Session(engine) as session:
+        save_simulated_solar_points(
+            session,
+            [_solar_row(NOW, config.station.id, config_hash=load_solar_hash(config))],
+        )
+        save_grid_availability_points(session, [_grid_point(NOW)])
+    monkeypatch.setenv("SMARTENERGY_DATABASE_URL", database_url)
+    monkeypatch.setenv("SMARTENERGY_CONFIG_PATH", str(CONFIG_PATH))
+
+    payload = get_dashboard_range()
+
+    assert payload["station_id"] == config.station.id
+    assert payload["station_timezone"] == "Europe/Kyiv"
+    assert payload["station_installation_date"] == "2025-10-06"
+    assert payload["selectable"] is True
+    assert payload["overall_start_utc"] == NOW.isoformat()
+    assert payload["overall_end_utc"] == NOW.isoformat()
+    assert set(payload["module_ranges"]) == {
+        "system_load",
+        "system_battery",
+        "system_ems",
+        "solar",
+        "grid",
+    }
 
 
 def test_frontend_mode_mapping_is_used_even_if_stored_id_is_stale(
@@ -364,6 +437,53 @@ def _ems_cache(timestamp: datetime, station_id: str, config_hash: str) -> EmsCac
         applied_charge_power_w=0.0,
         effective_load_power_w=300.0,
         curtailed_or_cut_load_w=20.0,
+    )
+
+
+def load_solar_hash(config) -> str:
+    from app.config_loader import calculate_config_hash
+
+    return calculate_config_hash(config)
+
+
+def _solar_row(
+    timestamp_utc: datetime,
+    station_id: str,
+    config_hash: str,
+) -> SimulatedSolarProduction:
+    return SimulatedSolarProduction(
+        station_id=station_id,
+        config_hash=config_hash,
+        timestamp_utc=timestamp_utc,
+        timestamp_local=timestamp_utc.astimezone(STATION_TIMEZONE),
+        ideal_power_w=500.0,
+        weather_code=0,
+        weather_state="clear",
+        cloud_cover_percent=0.0,
+        weather_factor=1.0,
+        simulated_power_w=500.0,
+    )
+
+
+def _grid_point(timestamp_utc: datetime) -> GridAvailabilityPointRecord:
+    return GridAvailabilityPointRecord(
+        timestamp_utc=timestamp_utc,
+        timestamp_local=timestamp_utc.astimezone(STATION_TIMEZONE),
+        generation_health_percent=100.0,
+        delivery_health_percent=100.0,
+        effective_health_percent=100.0,
+        deficit_percent=0.0,
+        daily_outage_hours=0.0,
+        outage_level="stable",
+        outage_queue="3.1",
+        local_grid_available=True,
+        is_outage_now=False,
+        grid_voltage_v=230.0,
+        reason="no active damage",
+        current_outage_window_start_utc=None,
+        current_outage_window_end_utc=None,
+        next_outage_window_start_utc=None,
+        next_outage_window_end_utc=None,
     )
 
 

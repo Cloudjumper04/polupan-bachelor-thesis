@@ -11,13 +11,15 @@ from fastapi import APIRouter, HTTPException
 from sqlalchemy.exc import OperationalError
 from sqlmodel import Session
 
-from app.config_loader import calculate_system_config_hash, load_config
+from app.config_loader import calculate_config_hash, calculate_system_config_hash, load_config
 from app.schemas import AppConfig
 from app.storage.battery_repository import (
     BatteryCachePoint,
     BatteryHistoryPoint,
+    get_battery_cache_range,
     get_latest_battery_cache_point,
     get_latest_battery_history_point,
+    get_battery_point_range,
     list_battery_cache_points,
     list_battery_history_points,
 )
@@ -26,26 +28,48 @@ from app.storage.ems_repository import (
     EmsCachePoint,
     EmsHistoryPoint,
     frontend_mode_id,
+    get_ems_cache_range,
     get_latest_ems_cache_point,
     get_latest_ems_history_point,
+    get_ems_point_range,
 )
+from app.storage.forecast_solar_repository import get_forecast_solar_range
+from app.storage.grid_repository import get_grid_availability_range
+from app.storage.interpolated_solar_repository import get_interpolated_solar_range
 from app.storage.load_repository import (
     LoadCachePoint,
     LoadHistoryPoint,
+    get_load_cache_range,
     get_latest_load_cache_point,
     get_latest_load_history_point,
+    get_load_point_range,
     list_load_cache_points,
     list_load_history_points,
 )
+from app.storage.simulated_solar_repository import get_simulated_solar_range
 
 
 DEFAULT_CONFIG_PATH = Path("backend/config/station.default.yaml")
 DEFAULT_DATABASE_URL = "sqlite:///backend/data/smartenergy.db"
 LOAD_POWER_CHART_STEP_SECONDS = 5 * 60
 BATTERY_HISTORY_MAX_POINTS = 150
+SYSTEM_POINT_MAX_STALENESS = timedelta(minutes=16)
 
 
 router = APIRouter(prefix="/api/system", tags=["system-dashboard"])
+dashboard_router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
+
+
+@dashboard_router.get("/range")
+def get_dashboard_range(station_id: str | None = None) -> dict[str, Any]:
+    config = load_config(_config_path())
+    engine = get_engine(_database_url())
+    with Session(engine) as session:
+        return build_dashboard_range_payload(
+            session,
+            config,
+            requested_station_id=station_id,
+        )
 
 
 @router.get("/dashboard")
@@ -63,6 +87,7 @@ def get_system_dashboard(
             config,
             target_utc=target_utc,
             requested_station_id=station_id,
+            history_mode=at is not None,
         )
 
 
@@ -72,10 +97,17 @@ def build_system_dashboard_payload(
     *,
     target_utc: datetime,
     requested_station_id: str | None = None,
+    history_mode: bool = False,
 ) -> dict[str, Any]:
     station_id = _resolve_station_id(config, requested_station_id)
     config_hash = calculate_system_config_hash(config)
     station_timezone = ZoneInfo(config.station.solar.installation.timezone)
+
+    system_range: tuple[datetime | None, datetime | None] | None = None
+    if history_mode:
+        system_range = _system_data_range(session, station_id, config_hash)
+        if system_range[0] is not None and system_range[1] is not None:
+            _ensure_target_in_range(target_utc, system_range, station_id, "system")
 
     try:
         load_point = _latest_load_point(session, station_id, config_hash, target_utc)
@@ -110,6 +142,26 @@ def build_system_dashboard_payload(
             },
         )
 
+    if history_mode:
+        stale_modules = _stale_module_points(
+            target_utc,
+            {
+                "load": load_point.timestamp_utc,
+                "battery": battery_point.timestamp_utc,
+                "ems": ems_point.timestamp_utc,
+            },
+        )
+        if stale_modules:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "message": "System dashboard data is too sparse near requested time",
+                    "station_id": station_id,
+                    "requested_at_utc": target_utc.isoformat(),
+                    "stale_modules": stale_modules,
+                },
+            )
+
     payload_timestamp = max(
         load_point.timestamp_utc,
         battery_point.timestamp_utc,
@@ -117,6 +169,13 @@ def build_system_dashboard_payload(
     )
     return {
         "timestamp_utc": payload_timestamp.isoformat(),
+        "requested_at_utc": target_utc.isoformat(),
+        "resolved_at_utc": payload_timestamp.isoformat(),
+        "module_timestamps": {
+            "load": load_point.timestamp_utc.isoformat(),
+            "battery": battery_point.timestamp_utc.isoformat(),
+            "ems": ems_point.timestamp_utc.isoformat(),
+        },
         "station_id": station_id,
         "ems": _ems_payload(ems_point, battery_point),
         "battery": _battery_payload(
@@ -139,6 +198,66 @@ def build_system_dashboard_payload(
     }
 
 
+def build_dashboard_range_payload(
+    session: Session,
+    config: AppConfig,
+    *,
+    requested_station_id: str | None = None,
+) -> dict[str, Any]:
+    station_id = _resolve_station_id(config, requested_station_id)
+    system_config_hash = calculate_system_config_hash(config)
+    solar_config_hash = calculate_config_hash(config)
+    station_timezone = ZoneInfo(config.station.solar.installation.timezone)
+
+    module_ranges = {
+        "system_load": _safe_range(
+            get_load_point_range,
+            session,
+            station_id,
+            system_config_hash,
+        ),
+        "system_battery": _safe_range(
+            get_battery_point_range,
+            session,
+            station_id,
+            system_config_hash,
+        ),
+        "system_ems": _safe_range(
+            get_ems_point_range,
+            session,
+            station_id,
+            system_config_hash,
+        ),
+        "solar": _combine_ranges(
+            _safe_range(get_simulated_solar_range, session, station_id, solar_config_hash),
+            _safe_range(get_forecast_solar_range, session, station_id, solar_config_hash),
+            _safe_range(get_interpolated_solar_range, session, station_id, solar_config_hash),
+        ),
+        "grid": _safe_range(get_grid_availability_range, session),
+    }
+    overall_range = _intersect_ranges(*module_ranges.values())
+    live_cache_range = _intersect_ranges(
+        _safe_range(get_load_cache_range, session, station_id, system_config_hash),
+        _safe_range(get_battery_cache_range, session, station_id, system_config_hash),
+        _safe_range(get_ems_cache_range, session, station_id, system_config_hash),
+    )
+
+    return {
+        "station_id": station_id,
+        "station_timezone": station_timezone.key,
+        "station_installation_date": config.station.installation_date,
+        "overall_start_utc": _optional_iso(overall_range[0]),
+        "overall_end_utc": _optional_iso(overall_range[1]),
+        "overall_start_local": _optional_local_iso(overall_range[0], station_timezone),
+        "overall_end_local": _optional_local_iso(overall_range[1], station_timezone),
+        "live_cache_end_utc": _optional_iso(live_cache_range[1]),
+        "selectable": overall_range[0] is not None and overall_range[1] is not None,
+        "module_ranges": {
+            name: _range_payload(value) for name, value in module_ranges.items()
+        },
+    }
+
+
 def _resolve_station_id(config: AppConfig, requested_station_id: str | None) -> str:
     if requested_station_id is None or requested_station_id == config.station.id:
         return config.station.id
@@ -149,6 +268,99 @@ def _resolve_station_id(config: AppConfig, requested_station_id: str | None) -> 
             "station_id": requested_station_id,
         },
     )
+
+
+def _system_data_range(
+    session: Session,
+    station_id: str,
+    config_hash: str,
+) -> tuple[datetime | None, datetime | None]:
+    return _intersect_ranges(
+        _safe_range(get_load_point_range, session, station_id, config_hash),
+        _safe_range(get_battery_point_range, session, station_id, config_hash),
+        _safe_range(get_ems_point_range, session, station_id, config_hash),
+    )
+
+
+def _safe_range(function: Any, *args: Any) -> tuple[datetime | None, datetime | None]:
+    try:
+        return function(*args)
+    except OperationalError:
+        return None, None
+
+
+def _combine_ranges(
+    *ranges: tuple[datetime | None, datetime | None],
+) -> tuple[datetime | None, datetime | None]:
+    starts = [start for start, _ in ranges if start is not None]
+    ends = [end for _, end in ranges if end is not None]
+    return (min(starts) if starts else None, max(ends) if ends else None)
+
+
+def _intersect_ranges(
+    *ranges: tuple[datetime | None, datetime | None],
+) -> tuple[datetime | None, datetime | None]:
+    if not ranges or any(start is None or end is None for start, end in ranges):
+        return None, None
+    starts = [start for start, _ in ranges if start is not None]
+    ends = [end for _, end in ranges if end is not None]
+    start = max(starts)
+    end = min(ends)
+    if start > end:
+        return None, None
+    return start, end
+
+
+def _ensure_target_in_range(
+    target_utc: datetime,
+    available_range: tuple[datetime | None, datetime | None],
+    station_id: str,
+    data_family: str,
+) -> None:
+    start_utc, end_utc = available_range
+    if start_utc is None or end_utc is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "message": f"{data_family.capitalize()} dashboard data is not available",
+                "station_id": station_id,
+                "requested_at_utc": target_utc.isoformat(),
+                "available_start_utc": None,
+                "available_end_utc": None,
+            },
+        )
+    if target_utc < start_utc or target_utc > end_utc:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "message": f"{data_family} dashboard data is not available for requested time",
+                "station_id": station_id,
+                "requested_at_utc": target_utc.isoformat(),
+                "available_start_utc": _optional_iso(start_utc),
+                "available_end_utc": _optional_iso(end_utc),
+            },
+        )
+
+
+def _stale_module_points(
+    target_utc: datetime,
+    module_timestamps: dict[str, datetime],
+) -> dict[str, str]:
+    stale: dict[str, str] = {}
+    for module_name, timestamp_utc in module_timestamps.items():
+        if target_utc - timestamp_utc > SYSTEM_POINT_MAX_STALENESS:
+            stale[module_name] = timestamp_utc.isoformat()
+    return stale
+
+
+def _range_payload(
+    value: tuple[datetime | None, datetime | None],
+) -> dict[str, str | None]:
+    start_utc, end_utc = value
+    return {
+        "start_utc": _optional_iso(start_utc),
+        "end_utc": _optional_iso(end_utc),
+    }
 
 
 def _latest_load_point(
@@ -559,3 +771,11 @@ def _config_path() -> Path:
 
 def _database_url() -> str:
     return os.environ.get("SMARTENERGY_DATABASE_URL", DEFAULT_DATABASE_URL)
+
+
+def _optional_iso(value: datetime | None) -> str | None:
+    return None if value is None else value.isoformat()
+
+
+def _optional_local_iso(value: datetime | None, station_timezone: ZoneInfo) -> str | None:
+    return None if value is None else value.astimezone(station_timezone).isoformat()

@@ -33,7 +33,8 @@ import GridWidget from "./components/GridWidget";
 import BatteryModule from "./components/dashboard/BatteryModule";
 import EmsModule from "./components/dashboard/EmsModule";
 import LoadModule from "./components/dashboard/LoadModule";
-import { fetchSystemDashboard } from "./api/system";
+import { fetchSolarDashboard, fetchSolarWeatherCurrent } from "./api/solar";
+import { fetchDashboardRange, fetchSystemDashboard } from "./api/system";
 import {
   batteryMockData,
   emsMockData,
@@ -65,6 +66,10 @@ export default function App() {
   const [systemStatus, setSystemStatus] = useState("loading");
   const [error, setError] = useState("");
   const [systemError, setSystemError] = useState("");
+  const [dashboardRange, setDashboardRange] = useState(null);
+  const [selectedDashboardTime, setSelectedDashboardTime] = useState(null);
+  const [historyViewInput, setHistoryViewInput] = useState("");
+  const [historyViewError, setHistoryViewError] = useState("");
   const [expanded, setExpanded] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyInputStart, setHistoryInputStart] = useState("");
@@ -98,44 +103,82 @@ export default function App() {
   useEffect(() => {
     const controller = new AbortController();
 
-    async function loadDashboard() {
+    async function loadDashboardRange() {
       try {
-        const response = await fetch("/api/solar/dashboard", {
-          signal: controller.signal,
-        });
-        if (!response.ok) {
-          throw new Error(`API ${response.status}`);
-        }
-        const payload = await response.json();
-        setDashboard(payload);
-        setStatus("ready");
-        setError("");
+        const payload = await fetchDashboardRange({ signal: controller.signal });
+        setDashboardRange(payload);
+        setHistoryViewError("");
+        setHistoryViewInput((currentValue) =>
+          currentValue || localInputFromIso(payload?.overall_end_local) || "",
+        );
       } catch (loadError) {
         if (loadError.name === "AbortError") return;
+        setHistoryViewError("Не вдалося отримати межі доступної історії");
+      }
+    }
+
+    loadDashboardRange();
+    return () => controller.abort();
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const at = selectedDashboardTime;
+    const historyMode = Boolean(at);
+
+    async function loadDashboard() {
+      try {
+        const payload = await fetchSolarDashboard({
+          at,
+          signal: controller.signal,
+        });
+        setDashboard(payload);
+        if (payload?.weather) setWeatherData(payload.weather);
+        setStatus("ready");
+        setError("");
+        if (historyMode) setHistoryViewError("");
+      } catch (loadError) {
+        if (loadError.name === "AbortError") return;
+        if (historyMode) {
+          setSelectedDashboardTime(null);
+          setHistoryViewError("Не вдалося завантажити стан для вибраного часу");
+          return;
+        }
         setStatus("error");
         setError("Не вдалося отримати дані з API");
       }
     }
 
     loadDashboard();
-    const timer = window.setInterval(loadDashboard, POLL_INTERVAL_MS);
+    const timer = historyMode ? null : window.setInterval(loadDashboard, POLL_INTERVAL_MS);
     return () => {
       controller.abort();
-      window.clearInterval(timer);
+      if (timer) window.clearInterval(timer);
     };
-  }, []);
+  }, [selectedDashboardTime]);
 
   useEffect(() => {
     const controller = new AbortController();
+    const at = selectedDashboardTime;
+    const historyMode = Boolean(at);
 
     async function loadSystemDashboard() {
       try {
-        const payload = await fetchSystemDashboard({ signal: controller.signal });
+        const payload = await fetchSystemDashboard({
+          at,
+          signal: controller.signal,
+        });
         setSystemDashboard(payload);
         setSystemStatus("ready");
         setSystemError("");
+        if (historyMode) setHistoryViewError("");
       } catch (loadError) {
         if (loadError.name === "AbortError") return;
+        if (historyMode) {
+          setSelectedDashboardTime(null);
+          setHistoryViewError("Не вдалося завантажити EMS/батарею/навантаження для вибраного часу");
+          return;
+        }
         console.warn("System dashboard API unavailable; using static fallback.", loadError);
         setSystemStatus("error");
         setSystemError("Дані EMS, батареї та навантаження тимчасово недоступні");
@@ -143,29 +186,31 @@ export default function App() {
     }
 
     loadSystemDashboard();
-    const timer = window.setInterval(
-      loadSystemDashboard,
-      SYSTEM_DASHBOARD_POLL_INTERVAL_MS,
-    );
+    const timer = historyMode
+      ? null
+      : window.setInterval(
+          loadSystemDashboard,
+          SYSTEM_DASHBOARD_POLL_INTERVAL_MS,
+        );
     return () => {
       controller.abort();
-      window.clearInterval(timer);
+      if (timer) window.clearInterval(timer);
     };
-  }, []);
+  }, [selectedDashboardTime]);
 
   useEffect(() => {
     const controller = new AbortController();
     let timer = null;
+    const at = selectedDashboardTime;
+    const historyMode = Boolean(at);
 
     async function loadWeather() {
       try {
-        const response = await fetch("/api/solar/weather-current", {
+        const payload = await fetchSolarWeatherCurrent({
+          at,
           signal: controller.signal,
         });
-        if (!response.ok) {
-          throw new Error(`API ${response.status}`);
-        }
-        setWeatherData(await response.json());
+        setWeatherData(payload);
       } catch (loadError) {
         if (loadError.name === "AbortError") return;
       }
@@ -179,12 +224,12 @@ export default function App() {
     }
 
     loadWeather();
-    scheduleHourlyRefresh();
+    if (!historyMode) scheduleHourlyRefresh();
     return () => {
       controller.abort();
       if (timer) window.clearTimeout(timer);
     };
-  }, []);
+  }, [selectedDashboardTime]);
 
   useEffect(() => {
     if (!dashboard || initialScrollDone.current || !scrollRef.current) return;
@@ -194,7 +239,9 @@ export default function App() {
     initialScrollDone.current = true;
   }, [dashboard]);
 
-  const stationTimezone = dashboard?.station?.timezone ?? "Europe/Kyiv";
+  const isDashboardHistoryMode = Boolean(selectedDashboardTime);
+  const stationTimezone =
+    dashboard?.station?.timezone ?? dashboardRange?.station_timezone ?? "Europe/Kyiv";
 
   useEffect(() => {
     const controller = new AbortController();
@@ -420,6 +467,35 @@ export default function App() {
     setHistoryError("");
   }
 
+  function applyDashboardHistoryTime() {
+    const normalizedInput = normalizeDateTimeLocalInput(historyViewInput);
+    if (!normalizedInput) {
+      setHistoryViewError("Вкажіть дату й час у доступному форматі");
+      return;
+    }
+    const rangeCheck = validateDashboardHistoryInput(normalizedInput, dashboardRange);
+    if (!rangeCheck.valid) {
+      setHistoryViewError(rangeCheck.message);
+      return;
+    }
+    setHistoryViewInput(normalizedInput);
+    setSelectedDashboardTime(`${normalizedInput}:00`);
+    setHistoryViewError("");
+  }
+
+  function returnToLiveMode() {
+    setSelectedDashboardTime(null);
+    setHistoryViewError("");
+    setHistoryViewInput((currentValue) => currentValue || currentDateTimeLocalInput());
+  }
+
+  function handleHistoryInputKeyDown(event) {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      applyDashboardHistoryTime();
+    }
+  }
+
   return (
     <>
       <header className="site-header">
@@ -441,7 +517,10 @@ export default function App() {
       <main className="page">
         <section className="main-layout">
           <div className="dashboard-left-column">
-            <GridWidget stationTimezone={stationTimezone} />
+            <GridWidget
+              stationTimezone={stationTimezone}
+              selectedDashboardTime={selectedDashboardTime}
+            />
 
             <section className={`solar-card${expanded ? " expanded" : ""}`}>
             <button
@@ -467,6 +546,7 @@ export default function App() {
               <div className="power-summary-wrap">
                 <CurrentOperatingSummary
                   fallbackCurrent={current}
+                  historyMode={isDashboardHistoryMode}
                 />
               </div>
             </header>
@@ -623,7 +703,44 @@ export default function App() {
       </main>
 
       <footer className="site-footer">
-        <div className="footer-inner" aria-hidden="true" />
+        <div className="footer-inner">
+          <div className="dashboard-history-controls">
+            <label className="dashboard-history-field">
+              <span>Історичний стан</span>
+              <input
+                type="datetime-local"
+                step="60"
+                value={historyViewInput}
+                min={localInputFromIso(dashboardRange?.overall_start_local)}
+                max={localInputFromIso(dashboardRange?.overall_end_local)}
+                onChange={(event) => {
+                  setHistoryViewInput(event.target.value);
+                  setHistoryViewError("");
+                }}
+                onKeyDown={handleHistoryInputKeyDown}
+              />
+            </label>
+            <button
+              className="dashboard-history-apply"
+              type="button"
+              onClick={applyDashboardHistoryTime}
+            >
+              Показати
+            </button>
+            {isDashboardHistoryMode && (
+              <button
+                className="dashboard-history-return"
+                type="button"
+                onClick={returnToLiveMode}
+              >
+                Повернутися до поточного моменту
+              </button>
+            )}
+            {historyViewError && (
+              <span className="dashboard-history-error">{historyViewError}</span>
+            )}
+          </div>
+        </div>
       </footer>
     </>
   );
@@ -669,7 +786,7 @@ function WeatherWidget({ weather }) {
   );
 }
 
-function CurrentOperatingSummary({ fallbackCurrent }) {
+function CurrentOperatingSummary({ fallbackCurrent, historyMode = false }) {
   const [displayPoint, setDisplayPoint] = useState(() =>
     normalizeCurrentPoint(fallbackCurrent),
   );
@@ -679,10 +796,16 @@ function CurrentOperatingSummary({ fallbackCurrent }) {
   useEffect(() => {
     const fallbackPoint = normalizeCurrentPoint(fallbackCurrent);
     fallbackPointRef.current = fallbackPoint;
-    setDisplayPoint((currentPoint) => currentPoint ?? fallbackPoint);
-  }, [fallbackCurrent]);
+    setDisplayPoint((currentPoint) =>
+      historyMode ? fallbackPoint : currentPoint ?? fallbackPoint,
+    );
+  }, [fallbackCurrent, historyMode]);
 
   useEffect(() => {
+    if (historyMode) {
+      bufferRef.current = [];
+      return undefined;
+    }
     const controller = new AbortController();
 
     async function loadCurrentBuffer() {
@@ -717,9 +840,10 @@ function CurrentOperatingSummary({ fallbackCurrent }) {
       controller.abort();
       window.clearInterval(timer);
     };
-  }, []);
+  }, [historyMode]);
 
   useEffect(() => {
+    if (historyMode) return undefined;
     const timer = window.setInterval(() => {
       const bufferedPoint = selectBufferedPoint(bufferRef.current, Date.now());
       if (bufferedPoint) {
@@ -727,7 +851,7 @@ function CurrentOperatingSummary({ fallbackCurrent }) {
       }
     }, CURRENT_DISPLAY_INTERVAL_MS);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [historyMode]);
 
   const fallbackPoint = fallbackPointRef.current;
   const power = displayPoint?.power ?? fallbackPoint?.power;
@@ -1413,6 +1537,54 @@ function msUntilNextFullHour(now = new Date()) {
   const nextHour = new Date(now);
   nextHour.setHours(now.getHours() + 1, 0, 0, 0);
   return Math.max(0, nextHour.getTime() - now.getTime());
+}
+
+function normalizeDateTimeLocalInput(value) {
+  const trimmed = String(value ?? "").trim();
+  const match = trimmed.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})/);
+  if (!match) return "";
+  return `${match[1]}T${match[2]}:${match[3]}`;
+}
+
+function currentDateTimeLocalInput(now = new Date()) {
+  const year = now.getFullYear();
+  const month = `${now.getMonth() + 1}`.padStart(2, "0");
+  const day = `${now.getDate()}`.padStart(2, "0");
+  const hour = `${now.getHours()}`.padStart(2, "0");
+  const minute = `${now.getMinutes()}`.padStart(2, "0");
+  return `${year}-${month}-${day}T${hour}:${minute}`;
+}
+
+function localInputFromIso(value) {
+  const normalized = normalizeDateTimeLocalInput(value);
+  return normalized || "";
+}
+
+function validateDashboardHistoryInput(value, range) {
+  if (!range?.selectable) {
+    return {
+      valid: true,
+      message: "",
+    };
+  }
+  const start = localInputFromIso(range.overall_start_local);
+  const end = localInputFromIso(range.overall_end_local);
+  if (start && value < start) {
+    return {
+      valid: false,
+      message: "Вибраний час раніше початку доступних даних",
+    };
+  }
+  if (end && value > end) {
+    return {
+      valid: false,
+      message: "Вибраний час пізніше доступних даних",
+    };
+  }
+  return {
+    valid: true,
+    message: "",
+  };
 }
 
 function normalizeHistoryBoundsPayload(payload) {

@@ -5,6 +5,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
+from fastapi import HTTPException
 from sqlmodel import Session
 
 from app.config_loader import calculate_config_hash, load_config
@@ -362,6 +363,85 @@ def test_solar_dashboard_endpoint_returns_chart_ready_payload(
     assert payload["charts"]["last3h"]["metadata"]["visual_resolution_seconds"] == 60
     assert payload["charts"]["last3h"]["metadata"]["source_resolutions_used"] == [5, 1]
     assert payload["charts"]["last3h"]["metadata"]["cache_status"] == "ok"
+
+
+def test_solar_dashboard_at_uses_weather_adjusted_source_tables(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config = load_config(CONFIG_PATH)
+    config_hash = calculate_config_hash(config)
+    database_url = f"sqlite:///{tmp_path / 'dashboard-at.db'}"
+    target = datetime(2026, 5, 10, 12, 0, tzinfo=timezone.utc)
+    engine = get_engine(database_url)
+    create_db_and_tables(engine)
+
+    with Session(engine) as session:
+        save_simulated_solar_points(
+            session,
+            [
+                _simulated_solar_row(
+                    target - timedelta(minutes=30),
+                    config_hash,
+                    180.0,
+                ),
+                _simulated_solar_row(
+                    target - timedelta(minutes=15),
+                    config_hash,
+                    210.0,
+                ),
+                _simulated_solar_row(target, config_hash, 240.0),
+            ],
+        )
+        save_forecast_rows(
+            session,
+            [
+                WeatherForecast(
+                    station_id=config.station.id,
+                    fetched_at_utc=target - timedelta(hours=1),
+                    forecast_timestamp_utc=target,
+                    forecast_timestamp_local=target.astimezone(STATION_TIMEZONE),
+                    weather_code=0,
+                    temperature_c=20.0,
+                    cloud_cover_percent=10.0,
+                    precipitation_mm=0.0,
+                    rain_mm=0.0,
+                    snowfall_cm=0.0,
+                    shortwave_radiation_w_m2=500.0,
+                    direct_radiation_w_m2=400.0,
+                    diffuse_radiation_w_m2=100.0,
+                    source="open_meteo_forecast",
+                    resolution_minutes=60,
+                )
+            ],
+        )
+
+    monkeypatch.setenv("SMARTENERGY_DATABASE_URL", database_url)
+    monkeypatch.setenv("SMARTENERGY_CONFIG_PATH", str(CONFIG_PATH))
+
+    payload = get_solar_dashboard(at=target)
+
+    assert payload["requested_at_utc"] == target.isoformat()
+    assert payload["resolved_at_utc"] == target.isoformat()
+    assert payload["current"]["solar_power_w"] == 240.0
+    assert payload["charts"]["last30m"]["metadata"]["returned_points"] > 0
+    assert payload["charts"]["last30m"]["points"][-1]["source"] == "historical"
+
+
+def test_solar_dashboard_at_outside_source_range_returns_404(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    database_url = f"sqlite:///{tmp_path / 'dashboard-at-out-of-range.db'}"
+    create_db_and_tables(get_engine(database_url))
+    monkeypatch.setenv("SMARTENERGY_DATABASE_URL", database_url)
+    monkeypatch.setenv("SMARTENERGY_CONFIG_PATH", str(CONFIG_PATH))
+
+    with pytest.raises(HTTPException) as exc_info:
+        get_solar_dashboard(at=datetime(2026, 5, 10, 12, 0, tzinfo=timezone.utc))
+
+    assert exc_info.value.status_code == 404
+    assert "Solar dashboard data is not available" in exc_info.value.detail["message"]
 
 
 def test_solar_dashboard_charts_return_reduced_visual_cadence_series(

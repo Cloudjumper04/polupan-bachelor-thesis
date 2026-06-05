@@ -10,11 +10,14 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 import pvlib
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from sqlalchemy.exc import OperationalError
 from sqlmodel import Session
 
-from app.api.system_dashboard import router as system_dashboard_router
+from app.api.system_dashboard import (
+    dashboard_router,
+    router as system_dashboard_router,
+)
 from app.config_loader import calculate_config_hash, load_config
 from app.schemas import AppConfig
 from app.simulation.solar import estimate_pv_array_operating_point
@@ -70,6 +73,7 @@ WEATHER_LABELS_UK = {
 
 
 app = FastAPI(title="SmartEnergy Lab API")
+app.include_router(dashboard_router)
 app.include_router(system_dashboard_router)
 
 
@@ -84,23 +88,37 @@ class PowerSourcePoint:
 @app.get("/api/solar/dashboard")
 def get_solar_dashboard(
     now: datetime | None = None,
+    at: datetime | None = None,
 ) -> dict[str, Any]:
     config = load_config(_config_path())
     engine = get_engine(_database_url())
-    now_utc = _normalize_now(now)
+    station_timezone = ZoneInfo(config.station.solar.installation.timezone)
+    now_utc = _normalize_requested_time(now=now, at=at, station_timezone=station_timezone)
     with Session(engine) as session:
-        return build_solar_dashboard_payload(session, config, now_utc)
+        return build_solar_dashboard_payload(
+            session,
+            config,
+            now_utc,
+            historical_mode=at is not None,
+        )
 
 
 @app.get("/api/solar/current")
 def get_solar_current(
     now: datetime | None = None,
+    at: datetime | None = None,
 ) -> dict[str, Any]:
     config = load_config(_config_path())
     engine = get_engine(_database_url())
-    now_utc = _normalize_now(now)
+    station_timezone = ZoneInfo(config.station.solar.installation.timezone)
+    now_utc = _normalize_requested_time(now=now, at=at, station_timezone=station_timezone)
     with Session(engine) as session:
-        return build_solar_current_payload(session, config, now_utc)
+        return build_solar_current_payload(
+            session,
+            config,
+            now_utc,
+            historical_mode=at is not None,
+        )
 
 
 @app.get("/api/solar/current-buffer")
@@ -118,10 +136,12 @@ def get_solar_current_buffer(
 @app.get("/api/solar/weather-current")
 def get_solar_weather_current(
     now: datetime | None = None,
+    at: datetime | None = None,
 ) -> dict[str, Any]:
     config = load_config(_config_path())
     engine = get_engine(_database_url())
-    now_utc = _normalize_now(now)
+    station_timezone = ZoneInfo(config.station.solar.installation.timezone)
+    now_utc = _normalize_requested_time(now=now, at=at, station_timezone=station_timezone)
     with Session(engine) as session:
         return build_solar_weather_current_payload(session, config, now_utc)
 
@@ -165,10 +185,14 @@ def get_solar_history_bounds(now: datetime | None = None) -> dict[str, Any]:
 
 
 @app.get("/api/grid/current")
-def get_grid_current(now: datetime | None = None) -> dict[str, Any]:
+def get_grid_current(
+    now: datetime | None = None,
+    at: datetime | None = None,
+) -> dict[str, Any]:
     config = load_config(_config_path())
     engine = get_engine(_database_url())
-    now_utc = _normalize_now(now)
+    station_timezone = ZoneInfo(config.station.grid.local_timezone)
+    now_utc = _normalize_requested_time(now=now, at=at, station_timezone=station_timezone)
     with Session(engine) as session:
         return build_grid_current_payload(session, config, now_utc)
 
@@ -206,24 +230,45 @@ def build_solar_dashboard_payload(
     session: Session,
     config: AppConfig,
     now: datetime | None = None,
+    *,
+    historical_mode: bool = False,
 ) -> dict[str, Any]:
     now_utc = _normalize_now(now)
     station_id = config.station.id
     config_hash = calculate_config_hash(config)
     station_timezone = ZoneInfo(config.station.solar.installation.timezone)
 
-    current_point = get_nearest_interpolated_solar_for_config(
-        session,
-        station_id,
-        config_hash,
-        now_utc,
-    )
+    if historical_mode:
+        available_start_utc, available_end_utc = _get_weather_adjusted_solar_range(
+            session,
+            station_id,
+            config_hash,
+        )
+        _ensure_requested_solar_time_available(
+            now_utc,
+            available_start_utc,
+            available_end_utc,
+            station_id,
+        )
+        current_point = _weather_adjusted_current_point(
+            session,
+            station_id,
+            config_hash,
+            now_utc,
+        )
+    else:
+        current_point = get_nearest_interpolated_solar_for_config(
+            session,
+            station_id,
+            config_hash,
+            now_utc,
+        )
+        available_start_utc, available_end_utc = get_interpolated_solar_range(
+            session,
+            station_id,
+            config_hash,
+        )
     weather_row = get_nearest_forecast_for_station(session, station_id, now_utc)
-    available_start_utc, available_end_utc = get_interpolated_solar_range(
-        session,
-        station_id,
-        config_hash,
-    )
 
     return {
         "station": {
@@ -231,6 +276,12 @@ def build_solar_dashboard_payload(
             "name": config.station.name,
             "timezone": station_timezone.key,
         },
+        "requested_at_utc": now_utc.isoformat(),
+        "resolved_at_utc": (
+            current_point.timestamp_utc.isoformat()
+            if current_point is not None
+            else now_utc.isoformat()
+        ),
         "available_start_local": _optional_local_iso(
             available_start_utc,
             station_timezone,
@@ -242,14 +293,26 @@ def build_solar_dashboard_payload(
         "current": _current_payload(current_point, now_utc, station_timezone, config),
         "weather": _weather_payload(weather_row, now_utc, config, station_timezone),
         "charts": {
-            chart_id: _chart_payload(
-                session=session,
-                station_id=station_id,
-                config_hash=config_hash,
-                station_timezone=station_timezone,
-                now_utc=now_utc,
-                minutes=int(definition["minutes"]),
-                resolution_seconds=int(definition["resolution_seconds"]),
+            chart_id: (
+                _source_chart_payload(
+                    session=session,
+                    station_id=station_id,
+                    config_hash=config_hash,
+                    station_timezone=station_timezone,
+                    now_utc=now_utc,
+                    minutes=int(definition["minutes"]),
+                    resolution_seconds=int(definition["resolution_seconds"]),
+                )
+                if historical_mode
+                else _chart_payload(
+                    session=session,
+                    station_id=station_id,
+                    config_hash=config_hash,
+                    station_timezone=station_timezone,
+                    now_utc=now_utc,
+                    minutes=int(definition["minutes"]),
+                    resolution_seconds=int(definition["resolution_seconds"]),
+                )
             )
             for chart_id, definition in SOLAR_DASHBOARD_CHARTS.items()
         },
@@ -272,17 +335,27 @@ def build_solar_current_payload(
     session: Session,
     config: AppConfig,
     now: datetime | None = None,
+    *,
+    historical_mode: bool = False,
 ) -> dict[str, Any]:
     now_utc = _normalize_now(now)
     station_id = config.station.id
     config_hash = calculate_config_hash(config)
     station_timezone = ZoneInfo(config.station.solar.installation.timezone)
-    current_point = get_nearest_interpolated_solar_for_config(
-        session,
-        station_id,
-        config_hash,
-        now_utc,
-    )
+    if historical_mode:
+        current_point = _weather_adjusted_current_point(
+            session,
+            station_id,
+            config_hash,
+            now_utc,
+        )
+    else:
+        current_point = get_nearest_interpolated_solar_for_config(
+            session,
+            station_id,
+            config_hash,
+            now_utc,
+        )
     current_payload = _current_payload(current_point, now_utc, station_timezone, config)
     return {
         "timestamp_local": current_payload["timestamp_local"],
@@ -621,6 +694,8 @@ def build_grid_current_payload(
                 "timezone": config.station.grid.local_timezone,
             },
             "current": None,
+            "requested_at_utc": now_utc.isoformat(),
+            "resolved_at_utc": None,
         }
     return {
         "status": "ok",
@@ -630,6 +705,8 @@ def build_grid_current_payload(
             "timezone": config.station.grid.local_timezone,
         },
         "current": _grid_point_payload(point),
+        "requested_at_utc": now_utc.isoformat(),
+        "resolved_at_utc": point.timestamp_utc.isoformat(),
     }
 
 
@@ -765,7 +842,7 @@ def _grid_local_date_bounds(
 
 
 def _current_payload(
-    point: InterpolatedSolarProduction | None,
+    point: InterpolatedSolarProduction | PowerSourcePoint | None,
     now_utc: datetime,
     station_timezone: ZoneInfo,
     config: AppConfig,
@@ -791,6 +868,23 @@ def _current_payload(
             None if operating_point is None else operating_point.current_a
         ),
     }
+
+
+def _weather_adjusted_current_point(
+    session: Session,
+    station_id: str,
+    config_hash: str,
+    target_utc: datetime,
+) -> PowerSourcePoint | None:
+    points = _load_weather_adjusted_source_points(
+        session,
+        station_id,
+        config_hash,
+        start_utc=target_utc - timedelta(seconds=BASE_SOLAR_STEP_SECONDS),
+        end_utc=target_utc + timedelta(seconds=1),
+    )
+    timestamps = [point.timestamp_utc for point in points]
+    return _select_power_source_point(points, timestamps, target_utc)
 
 
 def _current_buffer_point_payload(
@@ -915,6 +1009,72 @@ def _chart_payload(
             "actual_end_local": _optional_local_iso(actual_end, station_timezone),
             "visual_resolution_seconds": resolution_seconds,
             "source_resolutions_used": used_resolutions,
+            "returned_points": len(points),
+            "cache_status": cache_status,
+        },
+        "points": points,
+    }
+
+
+def _source_chart_payload(
+    session: Session,
+    station_id: str,
+    config_hash: str,
+    station_timezone: ZoneInfo,
+    now_utc: datetime,
+    minutes: int,
+    resolution_seconds: int,
+) -> dict[str, Any]:
+    aligned_end_utc = _floor_utc_to_cadence(now_utc, resolution_seconds)
+    start_utc = aligned_end_utc - timedelta(minutes=minutes)
+    source_points = _load_weather_adjusted_source_points(
+        session,
+        station_id,
+        config_hash,
+        start_utc=start_utc - timedelta(seconds=BASE_SOLAR_STEP_SECONDS),
+        end_utc=aligned_end_utc + timedelta(seconds=1),
+    )
+    source_timestamps = [point.timestamp_utc for point in source_points]
+    points: list[dict[str, Any]] = []
+    target_utc = start_utc
+    step = timedelta(seconds=resolution_seconds)
+    while target_utc <= aligned_end_utc:
+        point = _select_power_source_point(source_points, source_timestamps, target_utc)
+        if point is not None:
+            points.append(
+                {
+                    "timestamp_utc": target_utc.isoformat(),
+                    "timestamp_local": target_utc.astimezone(
+                        station_timezone
+                    ).isoformat(),
+                    "power_w": point.power_w,
+                    "source": point.source,
+                    "resolution_seconds": resolution_seconds,
+                    "source_resolution_seconds": BASE_SOLAR_STEP_SECONDS,
+                }
+            )
+        target_utc += step
+
+    cache_status = "ok"
+    if not points:
+        cache_status = "empty_range"
+    elif len(points) < 2:
+        cache_status = "insufficient_data"
+
+    actual_start = (
+        datetime.fromisoformat(points[0]["timestamp_utc"]) if points else None
+    )
+    actual_end = datetime.fromisoformat(points[-1]["timestamp_utc"]) if points else None
+    return {
+        "metadata": {
+            "requested_start_local": start_utc.astimezone(station_timezone).isoformat(),
+            "requested_end_local": aligned_end_utc.astimezone(
+                station_timezone
+            ).isoformat(),
+            "actual_start_local": _optional_local_iso(actual_start, station_timezone),
+            "actual_end_local": _optional_local_iso(actual_end, station_timezone),
+            "visual_resolution_seconds": resolution_seconds,
+            "source_resolutions_used": [BASE_SOLAR_STEP_SECONDS] if points else [],
             "returned_points": len(points),
             "cache_status": cache_status,
         },
@@ -1086,6 +1246,30 @@ def _get_weather_adjusted_solar_range(
     return _combine_ranges(simulated_range, forecast_range)
 
 
+def _ensure_requested_solar_time_available(
+    target_utc: datetime,
+    available_start_utc: datetime | None,
+    available_end_utc: datetime | None,
+    station_id: str,
+) -> None:
+    if (
+        available_start_utc is None
+        or available_end_utc is None
+        or target_utc < available_start_utc
+        or target_utc > available_end_utc
+    ):
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "message": "Solar dashboard data is not available for requested time",
+                "station_id": station_id,
+                "requested_at_utc": target_utc.isoformat(),
+                "available_start_utc": _optional_iso(available_start_utc),
+                "available_end_utc": _optional_iso(available_end_utc),
+            },
+        )
+
+
 def _combine_ranges(
     *ranges: tuple[datetime | None, datetime | None],
 ) -> tuple[datetime | None, datetime | None]:
@@ -1202,6 +1386,17 @@ def _normalize_query_datetime(value: datetime, station_timezone: ZoneInfo) -> da
     if value.tzinfo is None or value.utcoffset() is None:
         return value.replace(tzinfo=station_timezone).astimezone(timezone.utc)
     return value.astimezone(timezone.utc).replace(microsecond=0)
+
+
+def _normalize_requested_time(
+    *,
+    now: datetime | None,
+    at: datetime | None,
+    station_timezone: ZoneInfo,
+) -> datetime:
+    if at is not None:
+        return _normalize_query_datetime(at, station_timezone)
+    return _normalize_now(now)
 
 
 def _optional_local_iso(

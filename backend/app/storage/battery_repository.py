@@ -217,6 +217,33 @@ def get_latest_battery_history_point(
     )
 
 
+def get_battery_history_range(
+    session: Session,
+    station_id: str,
+    config_hash: str,
+) -> tuple[datetime | None, datetime | None]:
+    return _point_range(session, BatteryHistoryPoint, station_id, config_hash)
+
+
+def get_battery_cache_range(
+    session: Session,
+    station_id: str,
+    config_hash: str,
+) -> tuple[datetime | None, datetime | None]:
+    return _point_range(session, BatteryCachePoint, station_id, config_hash)
+
+
+def get_battery_point_range(
+    session: Session,
+    station_id: str,
+    config_hash: str,
+) -> tuple[datetime | None, datetime | None]:
+    return _combine_ranges(
+        get_battery_history_range(session, station_id, config_hash),
+        get_battery_cache_range(session, station_id, config_hash),
+    )
+
+
 def _save_points(
     session: Session,
     points: list[Any],
@@ -324,6 +351,42 @@ def _latest_point(
     if at_or_before_utc is not None:
         statement = statement.where(model.timestamp_utc <= _as_utc(at_or_before_utc))
     return session.exec(statement).first()
+
+
+def _point_range(
+    session: Session,
+    model: Any,
+    station_id: str,
+    config_hash: str,
+) -> tuple[datetime | None, datetime | None]:
+    first_statement = (
+        select(model)
+        .where(model.station_id == station_id)
+        .where(model.config_hash == config_hash)
+        .order_by(model.timestamp_utc)
+        .limit(1)
+    )
+    last_statement = (
+        select(model)
+        .where(model.station_id == station_id)
+        .where(model.config_hash == config_hash)
+        .order_by(model.timestamp_utc.desc())
+        .limit(1)
+    )
+    first_row = session.exec(first_statement).first()
+    last_row = session.exec(last_statement).first()
+    return (
+        first_row.timestamp_utc if first_row is not None else None,
+        last_row.timestamp_utc if last_row is not None else None,
+    )
+
+
+def _combine_ranges(
+    *ranges: tuple[datetime | None, datetime | None],
+) -> tuple[datetime | None, datetime | None]:
+    starts = [start for start, _ in ranges if start is not None]
+    ends = [end for _, end in ranges if end is not None]
+    return (min(starts) if starts else None, max(ends) if ends else None)
 
 
 def _unique_points(points: list[Any], validate_history_timestamp: bool) -> list[Any]:
