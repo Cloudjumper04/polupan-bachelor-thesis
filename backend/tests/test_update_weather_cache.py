@@ -227,6 +227,63 @@ def test_final_ranges_are_continuous_by_date(
     assert forecast_end.time() == time(23, 0)
 
 
+def test_validate_hourly_window_accepts_dst_fall_back_repeated_hour() -> None:
+    timestamps = _iter_real_hours(date(2025, 10, 26), date(2025, 10, 26))
+
+    assert len(timestamps) == 25
+    assert timestamps[3].isoformat() == "2025-10-26T03:00:00+03:00"
+    assert timestamps[4].isoformat() == "2025-10-26T03:00:00+02:00"
+
+    update_weather_cache._validate_hourly_window(
+        timestamps,
+        date(2025, 10, 26),
+        date(2025, 10, 26),
+        "Historical weather",
+    )
+
+
+def test_validate_hourly_window_rejects_missing_dst_repeated_hour() -> None:
+    timestamps = _iter_real_hours(date(2025, 10, 26), date(2025, 10, 26))
+    timestamps = timestamps[:4] + timestamps[5:]
+
+    with pytest.raises(RuntimeError, match="returned 24 rows; expected 25"):
+        update_weather_cache._validate_hourly_window(
+            timestamps,
+            date(2025, 10, 26),
+            date(2025, 10, 26),
+            "Historical weather",
+        )
+
+
+def test_validate_hourly_window_accepts_dst_spring_forward_missing_local_hour() -> None:
+    timestamps = _iter_real_hours(date(2026, 3, 29), date(2026, 3, 29))
+
+    assert len(timestamps) == 23
+    assert len({timestamp.astimezone(timezone.utc) for timestamp in timestamps}) == 23
+    assert {timestamp.date() for timestamp in timestamps} == {date(2026, 3, 29)}
+    assert 3 not in {timestamp.hour for timestamp in timestamps}
+
+    update_weather_cache._validate_hourly_window(
+        timestamps,
+        date(2026, 3, 29),
+        date(2026, 3, 29),
+        "Historical weather",
+    )
+
+
+def test_validate_hourly_window_rejects_duplicate_spring_forward_utc_collapse() -> None:
+    timestamps = _iter_real_hours(date(2026, 3, 29), date(2026, 3, 29))
+    timestamps = timestamps[:4] + [timestamps[3]] + timestamps[5:]
+
+    with pytest.raises(RuntimeError, match="duplicate hourly timestamps"):
+        update_weather_cache._validate_hourly_window(
+            timestamps,
+            date(2026, 3, 29),
+            date(2026, 3, 29),
+            "Historical weather",
+        )
+
+
 def test_validation_fails_if_historical_end_is_not_yesterday(tmp_path: Path) -> None:
     database_url = _database_url(tmp_path)
     _save_historical_days(database_url, date(2026, 5, 8), date(2026, 5, 8))
@@ -510,4 +567,20 @@ def _iter_local_hours(start_date: date, end_date: date) -> list[datetime]:
     while current < end:
         timestamps.append(current)
         current += timedelta(hours=1)
+    return timestamps
+
+
+def _iter_real_hours(start_date: date, end_date: date) -> list[datetime]:
+    start_local = datetime.combine(start_date, time.min, tzinfo=STATION_TIMEZONE)
+    end_local = datetime.combine(
+        end_date + timedelta(days=1),
+        time.min,
+        tzinfo=STATION_TIMEZONE,
+    )
+    current_utc = start_local.astimezone(timezone.utc)
+    end_utc = end_local.astimezone(timezone.utc)
+    timestamps: list[datetime] = []
+    while current_utc < end_utc:
+        timestamps.append(current_utc.astimezone(STATION_TIMEZONE))
+        current_utc += timedelta(hours=1)
     return timestamps

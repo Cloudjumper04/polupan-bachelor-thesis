@@ -105,20 +105,11 @@ def test_precipitation_states_produce_lower_factors_than_clear_state() -> None:
 def test_fetch_open_meteo_historical_weather_parses_mocked_response(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    payload = {
-        "hourly": {
-            "time": ["2026-01-01T00:00", "2026-01-01T01:00"],
-            "temperature_2m": [4.5, 6.2],
-            "cloud_cover": [10, 80],
-            "precipitation": [0.0, 1.2],
-            "rain": [0.0, 1.0],
-            "snowfall": [0.0, 0.0],
-            "weather_code": [0, 61],
-            "shortwave_radiation": [0.0, 40.0],
-            "direct_radiation": [0.0, 10.0],
-            "diffuse_radiation": [0.0, 30.0],
-        }
-    }
+    payload = _utc_payload_for_local_dates(
+        date(2026, 1, 1),
+        date(2026, 1, 1),
+        "Europe/Kyiv",
+    )
     captured_params: dict[str, object] = {}
 
     class FakeResponse:
@@ -144,36 +135,29 @@ def test_fetch_open_meteo_historical_weather_parses_mocked_response(
         end_date=date(2026, 1, 1),
     )
 
-    assert captured_params["start_date"] == "2026-01-01"
+    assert captured_params["start_date"] == "2025-12-31"
     assert captured_params["end_date"] == "2026-01-01"
-    assert captured_params["timezone"] == "Europe/Kyiv"
-    assert len(observations) == 2
+    assert captured_params["timezone"] == "UTC"
+    assert len(observations) == 24
     assert observations[0].timestamp_local.isoformat() == "2026-01-01T00:00:00+02:00"
     assert observations[0].timestamp_utc.isoformat() == "2025-12-31T22:00:00+00:00"
-    assert observations[1].weather_code == 61
-    assert observations[1].temperature_c == 6.2
-    assert observations[1].cloud_cover_percent == 80.0
-    assert observations[1].rain_mm == 1.0
+    assert observations[-1].timestamp_local.isoformat() == "2026-01-01T23:00:00+02:00"
+    assert observations[-1].timestamp_utc.isoformat() == "2026-01-01T21:00:00+00:00"
+    assert observations[1].weather_code == 0
+    assert observations[1].temperature_c == 4.5
+    assert observations[1].cloud_cover_percent == 10.0
+    assert observations[1].rain_mm == 0.0
     assert observations[1].source == weather.OPEN_METEO_SOURCE
 
 
 def test_fetch_open_meteo_forecast_parses_mocked_response(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    payload = {
-        "hourly": {
-            "time": ["2026-01-01T00:00", "2026-01-01T01:00", "2026-01-01T02:00"],
-            "temperature_2m": [4.5, 5.0, 6.2],
-            "cloud_cover": [10, 50, 80],
-            "precipitation": [0.0, 0.1, 1.2],
-            "rain": [0.0, 0.0, 1.0],
-            "snowfall": [0.0, 0.0, 0.0],
-            "weather_code": [0, 3, 61],
-            "shortwave_radiation": [0.0, 20.0, 40.0],
-            "direct_radiation": [0.0, 5.0, 10.0],
-            "diffuse_radiation": [0.0, 15.0, 30.0],
-        }
-    }
+    payload = _utc_payload_for_local_dates(
+        date(2026, 1, 1),
+        date(2026, 1, 3),
+        "Europe/Kyiv",
+    )
     captured_params: dict[str, object] = {}
 
     class FakeResponse:
@@ -199,22 +183,159 @@ def test_fetch_open_meteo_forecast_parses_mocked_response(
         end_date=date(2026, 1, 3),
     )
 
-    assert captured_params["start_date"] == "2026-01-01"
+    assert captured_params["start_date"] == "2025-12-31"
     assert captured_params["end_date"] == "2026-01-03"
     assert "forecast_hours" not in captured_params
-    assert captured_params["timezone"] == "Europe/Kyiv"
-    assert len(forecasts) == 3
+    assert captured_params["timezone"] == "UTC"
+    assert len(forecasts) == 72
     assert forecasts[0].forecast_timestamp_local.isoformat() == (
         "2026-01-01T00:00:00+02:00"
     )
     assert forecasts[0].forecast_timestamp_utc.isoformat() == (
         "2025-12-31T22:00:00+00:00"
     )
-    assert forecasts[2].weather_code == 61
-    assert forecasts[2].temperature_c == 6.2
-    assert forecasts[2].cloud_cover_percent == 80.0
+    assert forecasts[-1].forecast_timestamp_local.isoformat() == (
+        "2026-01-03T23:00:00+02:00"
+    )
+    assert forecasts[-1].forecast_timestamp_utc.isoformat() == (
+        "2026-01-03T21:00:00+00:00"
+    )
+    assert forecasts[2].weather_code == 0
+    assert forecasts[2].temperature_c == 4.5
+    assert forecasts[2].cloud_cover_percent == 10.0
     assert forecasts[2].source == OPEN_METEO_FORECAST_SOURCE
     assert forecasts[2].resolution_minutes == 60
+
+
+def test_historical_fetch_uses_utc_across_dst_fall_back(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = _utc_payload_for_local_dates(
+        date(2025, 10, 26),
+        date(2025, 10, 26),
+        "Europe/Kyiv",
+    )
+    _mock_open_meteo_response(monkeypatch, weather.OPEN_METEO_ARCHIVE_URL, payload)
+
+    observations = fetch_open_meteo_historical_weather(
+        latitude=50.0,
+        longitude=30.0,
+        timezone="Europe/Kyiv",
+        start_date=date(2025, 10, 26),
+        end_date=date(2025, 10, 26),
+    )
+
+    assert len(observations) == 25
+    assert len({row.timestamp_utc for row in observations}) == 25
+    repeated_hour_rows = [
+        row for row in observations if row.timestamp_local.hour == 3
+    ]
+    assert [row.timestamp_local.fold for row in repeated_hour_rows] == [0, 1]
+    assert [row.timestamp_utc.isoformat() for row in repeated_hour_rows] == [
+        "2025-10-26T00:00:00+00:00",
+        "2025-10-26T01:00:00+00:00",
+    ]
+
+
+def test_historical_fetch_uses_utc_across_dst_spring_forward(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = _utc_payload_for_local_dates(
+        date(2026, 3, 29),
+        date(2026, 3, 29),
+        "Europe/Kyiv",
+    )
+    captured_params: dict[str, object] = {}
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return payload
+
+    def fake_get(url: str, params: dict[str, object], timeout: int) -> FakeResponse:
+        captured_params.update(params)
+        assert url == weather.OPEN_METEO_ARCHIVE_URL
+        assert timeout == 30
+        return FakeResponse()
+
+    monkeypatch.setattr(weather.requests, "get", fake_get)
+
+    observations = fetch_open_meteo_historical_weather(
+        latitude=50.0,
+        longitude=30.0,
+        timezone="Europe/Kyiv",
+        start_date=date(2026, 3, 29),
+        end_date=date(2026, 3, 29),
+    )
+
+    assert captured_params["start_date"] == "2026-03-28"
+    assert captured_params["end_date"] == "2026-03-29"
+    assert captured_params["timezone"] == "UTC"
+    assert len(observations) == 23
+    assert len({row.timestamp_utc for row in observations}) == 23
+    assert {row.timestamp_local.date() for row in observations} == {date(2026, 3, 29)}
+    assert 3 not in {row.timestamp_local.hour for row in observations}
+    assert observations[0].timestamp_local.isoformat() == "2026-03-29T00:00:00+02:00"
+    assert observations[-1].timestamp_local.isoformat() == "2026-03-29T23:00:00+03:00"
+
+
+def test_forecast_fetch_uses_utc_across_dst_fall_back(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = _utc_payload_for_local_dates(
+        date(2025, 10, 26),
+        date(2025, 10, 26),
+        "Europe/Kyiv",
+    )
+    _mock_open_meteo_response(monkeypatch, weather.OPEN_METEO_FORECAST_URL, payload)
+
+    forecasts = fetch_open_meteo_forecast(
+        latitude=50.0,
+        longitude=30.0,
+        timezone="Europe/Kyiv",
+        start_date=date(2025, 10, 26),
+        end_date=date(2025, 10, 26),
+    )
+
+    assert len(forecasts) == 25
+    assert len({row.forecast_timestamp_utc for row in forecasts}) == 25
+    repeated_hour_rows = [
+        row for row in forecasts if row.forecast_timestamp_local.hour == 3
+    ]
+    assert [row.forecast_timestamp_local.fold for row in repeated_hour_rows] == [0, 1]
+    assert [row.forecast_timestamp_utc.isoformat() for row in repeated_hour_rows] == [
+        "2025-10-26T00:00:00+00:00",
+        "2025-10-26T01:00:00+00:00",
+    ]
+
+
+def test_historical_fetch_rejects_duplicate_non_ambiguous_local_timestamp(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = _open_meteo_payload(["2026-05-10T00:00", "2026-05-10T00:00"])
+
+    with pytest.raises(RuntimeError, match="duplicate non-ambiguous local timestamp"):
+        weather._parse_open_meteo_hourly_response(payload, "Europe/Kyiv")
+
+
+def test_forecast_fetch_rejects_duplicate_utc_timestamp(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = _open_meteo_payload(
+        ["2026-05-10T00:00:00+00:00", "2026-05-10T00:00:00+00:00"]
+    )
+    _mock_open_meteo_response(monkeypatch, weather.OPEN_METEO_FORECAST_URL, payload)
+
+    with pytest.raises(RuntimeError, match="duplicate UTC timestamp"):
+        fetch_open_meteo_forecast(
+            latitude=50.0,
+            longitude=30.0,
+            timezone="Europe/Kyiv",
+            start_date=date(2026, 5, 10),
+            end_date=date(2026, 5, 10),
+        )
 
 
 def test_fetch_open_meteo_forecast_raises_clear_error_on_http_failure(
@@ -325,3 +446,78 @@ def _weather_observation(
         diffuse_radiation_w_m2=20.0,
         source="open-meteo-archive",
     )
+
+
+def _open_meteo_payload(times: list[str]) -> dict[str, object]:
+    count = len(times)
+    return {
+        "hourly": {
+            "time": times,
+            "temperature_2m": [4.5] * count,
+            "cloud_cover": [10] * count,
+            "precipitation": [0.0] * count,
+            "rain": [0.0] * count,
+            "snowfall": [0.0] * count,
+            "weather_code": [0] * count,
+            "shortwave_radiation": [0.0] * count,
+            "direct_radiation": [0.0] * count,
+            "diffuse_radiation": [0.0] * count,
+        }
+    }
+
+
+def _utc_payload_for_local_dates(
+    start_date: date,
+    end_date: date,
+    timezone_name: str,
+) -> dict[str, object]:
+    station_timezone = ZoneInfo(timezone_name)
+    start_utc, end_utc = weather._local_date_range_to_utc_bounds(
+        start_date,
+        end_date,
+        station_timezone,
+    )
+    request_start_date, request_end_date = weather._utc_request_dates_for_local_range(
+        start_utc,
+        end_utc,
+    )
+    return _open_meteo_payload(
+        _utc_hour_strings_for_request_dates(request_start_date, request_end_date)
+    )
+
+
+def _utc_hour_strings_for_request_dates(
+    start_date: date,
+    end_date: date,
+) -> list[str]:
+    current = datetime.combine(start_date, datetime.min.time(), tzinfo=timezone.utc)
+    end = datetime.combine(
+        end_date + timedelta(days=1),
+        datetime.min.time(),
+        tzinfo=timezone.utc,
+    )
+    values: list[str] = []
+    while current < end:
+        values.append(current.replace(tzinfo=None).isoformat(timespec="minutes"))
+        current += timedelta(hours=1)
+    return values
+
+
+def _mock_open_meteo_response(
+    monkeypatch: pytest.MonkeyPatch,
+    expected_url: str,
+    payload: dict[str, object],
+) -> None:
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return payload
+
+    def fake_get(url: str, params: dict[str, object], timeout: int) -> FakeResponse:
+        assert url == expected_url
+        assert timeout == 30
+        return FakeResponse()
+
+    monkeypatch.setattr(weather.requests, "get", fake_get)

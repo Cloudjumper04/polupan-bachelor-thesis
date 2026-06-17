@@ -216,7 +216,7 @@ def run_scheduler(
 
     cycle_ok = run_pipeline_cycle(settings, pipeline_runner=runner)
     last_pipeline = time.monotonic()
-    last_solar_cache = last_pipeline if cycle_ok else 0.0
+    last_solar_cache = last_pipeline if cycle_ok else None
     if settings.run_once:
         _log("data pipeline scheduler run-once mode exiting")
         return 0 if cycle_ok else 1
@@ -232,13 +232,20 @@ def run_scheduler(
                 last_solar_cache = last_pipeline
             continue
 
-        if now_monotonic - last_solar_cache >= solar_cache_interval_seconds:
+        if (
+            last_solar_cache is not None
+            and now_monotonic - last_solar_cache >= solar_cache_interval_seconds
+        ):
             run_solar_cache_cycle(settings)
             last_solar_cache = time.monotonic()
             continue
 
         next_pipeline_seconds = pipeline_interval_seconds - (now_monotonic - last_pipeline)
-        next_cache_seconds = solar_cache_interval_seconds - (now_monotonic - last_solar_cache)
+        next_cache_seconds = (
+            solar_cache_interval_seconds - (now_monotonic - last_solar_cache)
+            if last_solar_cache is not None
+            else pipeline_interval_seconds
+        )
         sleep_seconds = max(0.1, min(5.0, next_pipeline_seconds, next_cache_seconds))
         shutdown.wait(sleep_seconds)
 

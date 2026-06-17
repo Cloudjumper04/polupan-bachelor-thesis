@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from hashlib import sha256
 from math import isnan
 from random import Random
@@ -15,8 +16,11 @@ from app.storage.solar_repository import IdealSolarProduction
 from app.storage.weather_repository import WeatherObservation
 
 
+LOGGER = logging.getLogger(__name__)
+
 OPEN_METEO_ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
 OPEN_METEO_FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
+OPEN_METEO_CANONICAL_TIMEZONE = "UTC"
 OPEN_METEO_SOURCE = "open-meteo-archive"
 OPEN_METEO_FORECAST_SOURCE = "open_meteo_forecast"
 
@@ -142,13 +146,23 @@ def fetch_open_meteo_historical_weather(
     if end_date < start_date:
         raise ValueError("end_date must be on or after start_date")
 
+    station_timezone = ZoneInfo(timezone)
+    start_utc, end_utc = _local_date_range_to_utc_bounds(
+        start_date,
+        end_date,
+        station_timezone,
+    )
+    request_start_date, request_end_date = _utc_request_dates_for_local_range(
+        start_utc,
+        end_utc,
+    )
     params = {
         "latitude": latitude,
         "longitude": longitude,
-        "start_date": start_date.isoformat(),
-        "end_date": end_date.isoformat(),
+        "start_date": request_start_date.isoformat(),
+        "end_date": request_end_date.isoformat(),
         "hourly": ",".join(HOURLY_VARIABLES),
-        "timezone": timezone,
+        "timezone": OPEN_METEO_CANONICAL_TIMEZONE,
     }
     try:
         response = requests.get(OPEN_METEO_ARCHIVE_URL, params=params, timeout=30)
@@ -163,7 +177,12 @@ def fetch_open_meteo_historical_weather(
         reason = payload.get("reason", "unknown API error")
         raise RuntimeError(f"Open-Meteo historical weather error: {reason}")
 
-    return _parse_open_meteo_hourly_response(payload, timezone)
+    observations = _parse_open_meteo_hourly_response(
+        payload,
+        timezone,
+        provider_timezone_name=OPEN_METEO_CANONICAL_TIMEZONE,
+    )
+    return _filter_observations_by_utc_range(observations, start_utc, end_utc)
 
 
 def fetch_open_meteo_forecast(
@@ -181,15 +200,27 @@ def fetch_open_meteo_forecast(
     if start_date is None and (forecast_hours is None or forecast_hours <= 0):
         raise ValueError("forecast_hours must be greater than 0")
 
+    station_timezone = ZoneInfo(timezone)
+    start_utc: datetime | None = None
+    end_utc: datetime | None = None
     params = {
         "latitude": latitude,
         "longitude": longitude,
         "hourly": ",".join(HOURLY_VARIABLES),
-        "timezone": timezone,
+        "timezone": OPEN_METEO_CANONICAL_TIMEZONE,
     }
     if start_date is not None and end_date is not None:
-        params["start_date"] = start_date.isoformat()
-        params["end_date"] = end_date.isoformat()
+        start_utc, end_utc = _local_date_range_to_utc_bounds(
+            start_date,
+            end_date,
+            station_timezone,
+        )
+        request_start_date, request_end_date = _utc_request_dates_for_local_range(
+            start_utc,
+            end_utc,
+        )
+        params["start_date"] = request_start_date.isoformat()
+        params["end_date"] = request_end_date.isoformat()
     else:
         params["forecast_hours"] = forecast_hours
     try:
@@ -205,7 +236,14 @@ def fetch_open_meteo_forecast(
         reason = payload.get("reason", "unknown API error")
         raise RuntimeError(f"Open-Meteo forecast weather error: {reason}")
 
-    return _parse_open_meteo_forecast_response(payload, timezone)
+    forecasts = _parse_open_meteo_forecast_response(
+        payload,
+        timezone,
+        provider_timezone_name=OPEN_METEO_CANONICAL_TIMEZONE,
+    )
+    if start_utc is None or end_utc is None:
+        return forecasts
+    return _filter_forecasts_by_utc_range(forecasts, start_utc, end_utc)
 
 
 def generate_weather_adjusted_solar(
@@ -275,6 +313,7 @@ def generate_weather_adjusted_solar(
 def _parse_open_meteo_hourly_response(
     payload: dict[str, Any],
     timezone_name: str,
+    provider_timezone_name: str | None = None,
 ) -> list[WeatherObservationData]:
     hourly = payload.get("hourly")
     if not isinstance(hourly, dict):
@@ -296,15 +335,19 @@ def _parse_open_meteo_hourly_response(
         values_by_variable[variable] = values
 
     station_timezone = ZoneInfo(timezone_name)
+    provider_timezone = ZoneInfo(provider_timezone_name or timezone_name)
+    parsed_timestamps = _parse_open_meteo_timestamps(
+        times,
+        provider_timezone,
+        "Open-Meteo historical weather",
+    )
     observations: list[WeatherObservationData] = []
-    for index, timestamp_value in enumerate(times):
-        timestamp_local = _parse_open_meteo_timestamp(
-            timestamp_value,
-            station_timezone,
-        )
+    for index, provider_timestamp in enumerate(parsed_timestamps):
+        timestamp_utc = provider_timestamp.astimezone(timezone.utc)
+        timestamp_local = timestamp_utc.astimezone(station_timezone)
         observations.append(
             WeatherObservationData(
-                timestamp_utc=timestamp_local.astimezone(timezone.utc),
+                timestamp_utc=timestamp_utc,
                 timestamp_local=timestamp_local,
                 weather_code=_optional_int(values_by_variable["weather_code"][index]),
                 temperature_c=_optional_float(
@@ -336,6 +379,7 @@ def _parse_open_meteo_hourly_response(
 def _parse_open_meteo_forecast_response(
     payload: dict[str, Any],
     timezone_name: str,
+    provider_timezone_name: str | None = None,
 ) -> list[WeatherForecastData]:
     hourly = payload.get("hourly")
     if not isinstance(hourly, dict):
@@ -357,17 +401,19 @@ def _parse_open_meteo_forecast_response(
         values_by_variable[variable] = values
 
     station_timezone = ZoneInfo(timezone_name)
+    provider_timezone = ZoneInfo(provider_timezone_name or timezone_name)
+    parsed_timestamps = _parse_open_meteo_timestamps(
+        times,
+        provider_timezone,
+        "Open-Meteo forecast weather",
+    )
     forecasts: list[WeatherForecastData] = []
-    for index, timestamp_value in enumerate(times):
-        forecast_timestamp_local = _parse_open_meteo_timestamp(
-            timestamp_value,
-            station_timezone,
-        )
+    for index, provider_timestamp in enumerate(parsed_timestamps):
+        forecast_timestamp_utc = provider_timestamp.astimezone(timezone.utc)
+        forecast_timestamp_local = forecast_timestamp_utc.astimezone(station_timezone)
         forecasts.append(
             WeatherForecastData(
-                forecast_timestamp_utc=forecast_timestamp_local.astimezone(
-                    timezone.utc
-                ),
+                forecast_timestamp_utc=forecast_timestamp_utc,
                 forecast_timestamp_local=forecast_timestamp_local,
                 weather_code=_optional_int(values_by_variable["weather_code"][index]),
                 temperature_c=_optional_float(
@@ -396,14 +442,142 @@ def _parse_open_meteo_forecast_response(
     return forecasts
 
 
-def _parse_open_meteo_timestamp(
-    value: str,
+def _local_date_range_to_utc_bounds(
+    start_date: date,
+    end_date: date,
     station_timezone: ZoneInfo,
+) -> tuple[datetime, datetime]:
+    start_local = datetime.combine(start_date, datetime.min.time(), tzinfo=station_timezone)
+    end_local = datetime.combine(
+        end_date + timedelta(days=1),
+        datetime.min.time(),
+        tzinfo=station_timezone,
+    )
+    return start_local.astimezone(timezone.utc), end_local.astimezone(timezone.utc)
+
+
+def _utc_request_dates_for_local_range(
+    start_utc: datetime,
+    end_utc: datetime,
+) -> tuple[date, date]:
+    if end_utc <= start_utc:
+        raise ValueError("end_utc must be later than start_utc")
+    last_requested_utc = end_utc - timedelta(seconds=1)
+    return start_utc.date(), last_requested_utc.date()
+
+
+def _filter_observations_by_utc_range(
+    observations: list[WeatherObservationData],
+    start_utc: datetime,
+    end_utc: datetime,
+) -> list[WeatherObservationData]:
+    return [
+        observation
+        for observation in observations
+        if start_utc <= observation.timestamp_utc < end_utc
+    ]
+
+
+def _filter_forecasts_by_utc_range(
+    forecasts: list[WeatherForecastData],
+    start_utc: datetime,
+    end_utc: datetime,
+) -> list[WeatherForecastData]:
+    return [
+        forecast
+        for forecast in forecasts
+        if start_utc <= forecast.forecast_timestamp_utc < end_utc
+    ]
+
+
+def _parse_open_meteo_timestamps(
+    values: list[Any],
+    station_timezone: ZoneInfo,
+    label: str,
+) -> list[datetime]:
+    parsed_timestamps: list[datetime] = []
+    naive_occurrences: dict[datetime, int] = {}
+    utc_indexes: dict[datetime, int] = {}
+
+    for index, value in enumerate(values):
+        parsed = _parse_open_meteo_iso_datetime(value, label, index)
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            occurrence = naive_occurrences.get(parsed, 0)
+            timestamp_local = _resolve_naive_open_meteo_timestamp(
+                parsed,
+                station_timezone,
+                occurrence,
+                label,
+                index,
+            )
+            naive_occurrences[parsed] = occurrence + 1
+        else:
+            timestamp_local = parsed.astimezone(station_timezone)
+
+        timestamp_utc = timestamp_local.astimezone(timezone.utc)
+        existing_index = utc_indexes.get(timestamp_utc)
+        if existing_index is not None:
+            raise RuntimeError(
+                f"{label} returned duplicate UTC timestamp "
+                f"{timestamp_utc.isoformat()} at indexes {existing_index} and {index}"
+            )
+        utc_indexes[timestamp_utc] = index
+        parsed_timestamps.append(timestamp_local)
+
+    return parsed_timestamps
+
+
+def _parse_open_meteo_iso_datetime(
+    value: Any,
+    label: str,
+    index: int,
 ) -> datetime:
-    parsed = datetime.fromisoformat(value)
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=station_timezone)
-    return parsed.astimezone(station_timezone)
+    if not isinstance(value, str):
+        raise RuntimeError(
+            f"{label} returned non-string hourly timestamp at index {index}"
+        )
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise RuntimeError(
+            f"{label} returned invalid hourly timestamp at index {index}: {value}"
+        ) from exc
+
+
+def _resolve_naive_open_meteo_timestamp(
+    parsed: datetime,
+    station_timezone: ZoneInfo,
+    occurrence: int,
+    label: str,
+    index: int,
+) -> datetime:
+    if occurrence == 0:
+        return parsed.replace(tzinfo=station_timezone, fold=0)
+    if occurrence > 1:
+        raise RuntimeError(
+            f"{label} returned more than two rows for local timestamp "
+            f"{parsed.isoformat()} in {station_timezone.key}"
+        )
+
+    first_fold = parsed.replace(tzinfo=station_timezone, fold=0)
+    second_fold = parsed.replace(tzinfo=station_timezone, fold=1)
+    first_utc = first_fold.astimezone(timezone.utc)
+    second_utc = second_fold.astimezone(timezone.utc)
+    if first_utc == second_utc:
+        raise RuntimeError(
+            f"{label} returned duplicate non-ambiguous local timestamp "
+            f"{parsed.isoformat()} in {station_timezone.key} at index {index}"
+        )
+
+    LOGGER.warning(
+        "%s returned duplicate ambiguous local timestamp %s in %s; "
+        "assigned fold=1 to occurrence 2 so UTC becomes %s",
+        label,
+        parsed.isoformat(),
+        station_timezone.key,
+        second_utc.isoformat(),
+    )
+    return second_fold
 
 
 def _optional_float(value: Any) -> float | None:

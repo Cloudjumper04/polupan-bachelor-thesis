@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 import sys
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
@@ -10,7 +10,9 @@ from zoneinfo import ZoneInfo
 import pytest
 from sqlmodel import Session
 
+from app.api.system_dashboard import get_dashboard_range, get_system_dashboard
 from app.config_loader import calculate_system_config_hash, load_config
+from app.simulation import weather
 from app.simulation.engine import SystemSimulationPersistSummary
 from app.storage.battery_repository import list_battery_cache_points
 from app.storage.database import get_engine
@@ -378,6 +380,77 @@ def test_repeated_pipeline_run_replaces_system_cache_without_duplicates(
     )
 
 
+def test_startup_backfill_uses_utc_weather_and_populates_dashboard(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = tmp_path / "startup-backfill.db"
+    db_url = _db_url(db_path)
+    startup_now = datetime(2026, 4, 4, 10, 5, 30, tzinfo=timezone.utc)
+    history_start = date(2026, 3, 28)
+
+    monkeypatch.setattr(
+        update_data_pipeline.solar_data_scheduler,
+        "IdealSolarGenerator",
+        FakePipelineIdealSolarGenerator,
+    )
+    monkeypatch.setattr(
+        update_data_pipeline.solar_data_scheduler.update_weather_cache,
+        "fetch_open_meteo_historical_weather",
+        _parser_backed_historical_fetch,
+    )
+    monkeypatch.setattr(
+        update_data_pipeline.solar_data_scheduler.update_weather_cache,
+        "fetch_open_meteo_forecast",
+        _parser_backed_forecast_fetch,
+    )
+
+    summary = update_data_pipeline.run_data_pipeline(
+        config_path=CONFIG_PATH,
+        database_url=db_url,
+        history_start=history_start,
+        source_days_ahead=2,
+        grid_days_ahead=7,
+        allow_fallbacks=False,
+        now=startup_now,
+    )
+
+    assert summary.source_maintenance is not None
+    assert summary.source_maintenance.weather_cache.historical_rows_inserted == 167
+    assert summary.source_maintenance.weather_cache.forecast_rows_inserted == 72
+    assert summary.source_coverage is not None
+    assert summary.source_coverage.grid_missing_points == 0
+    assert summary.system_generation is not None
+    assert summary.system_generation.solar_fallback_minutes == 0
+    assert summary.system_generation.grid_fallback_minutes == 0
+    assert summary.system_generation.weather_fallback_minutes == 0
+    assert summary.system_generation.persisted is not None
+    assert summary.system_generation.persisted.load_cache_rows > 0
+    assert summary.system_generation.persisted.battery_cache_rows > 0
+    assert summary.system_generation.persisted.ems_cache_rows > 0
+
+    config = load_config(CONFIG_PATH)
+    config_hash = calculate_system_config_hash(config)
+    engine = get_engine(db_url)
+    with Session(engine) as session:
+        assert list_load_cache_points(session, config.station.id, config_hash)
+        assert list_battery_cache_points(session, config.station.id, config_hash)
+        assert list_ems_cache_points(session, config.station.id, config_hash)
+
+    monkeypatch.setenv("SMARTENERGY_DATABASE_URL", db_url)
+    monkeypatch.setenv("SMARTENERGY_CONFIG_PATH", str(CONFIG_PATH))
+    range_payload = get_dashboard_range()
+    system_payload = get_system_dashboard(at=startup_now)
+
+    assert range_payload["selectable"] is True
+    assert all(
+        module_range["start_utc"] is not None and module_range["end_utc"] is not None
+        for module_range in range_payload["module_ranges"].values()
+    )
+    assert system_payload["station_id"] == config.station.id
+    assert set(system_payload["module_timestamps"]) == {"load", "battery", "ems"}
+
+
 def _mock_non_writing_pipeline(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         update_data_pipeline,
@@ -440,3 +513,136 @@ def _sqlite_table_names(db_path: Path) -> set[str]:
 
 def _db_url(db_path: Path) -> str:
     return f"sqlite:///{db_path}"
+
+
+class FakePipelineIdealSolarGenerator:
+    def __init__(self, config) -> None:
+        self.station_timezone = ZoneInfo(config.station.solar.installation.timezone)
+
+    def generate(
+        self,
+        start: datetime,
+        end: datetime,
+        timestep_minutes: int,
+    ) -> list[SimpleNamespace]:
+        current = start.astimezone(timezone.utc)
+        end_utc = end.astimezone(timezone.utc)
+        points: list[SimpleNamespace] = []
+        while current < end_utc:
+            local = current.astimezone(self.station_timezone)
+            daylight = 7 <= local.hour <= 17
+            ideal_power_w = 350.0 if daylight else 0.0
+            points.append(
+                SimpleNamespace(
+                    timestamp_utc=current,
+                    timestamp_local=local,
+                    sun_elevation_deg=25.0 if daylight else -5.0,
+                    sun_azimuth_deg=180.0,
+                    incidence_factor=0.6 if daylight else 0.0,
+                    ambient_factor=0.04 if daylight else 0.0,
+                    direct_power_w=260.0 if daylight else 0.0,
+                    ambient_power_w=90.0 if daylight else 0.0,
+                    ideal_power_w=ideal_power_w,
+                )
+            )
+            current += timedelta(minutes=timestep_minutes)
+        return points
+
+
+def _parser_backed_historical_fetch(
+    latitude: float,
+    longitude: float,
+    timezone: str,
+    start_date: date,
+    end_date: date,
+):
+    station_timezone = ZoneInfo(timezone)
+    start_utc, end_utc = weather._local_date_range_to_utc_bounds(
+        start_date,
+        end_date,
+        station_timezone,
+    )
+    times = _open_meteo_utc_hour_strings_for_local_range(start_utc, end_utc)
+    observations = weather._parse_open_meteo_hourly_response(
+        _open_meteo_payload(times),
+        timezone,
+        provider_timezone_name=weather.OPEN_METEO_CANONICAL_TIMEZONE,
+    )
+    return [
+        observation
+        for observation in observations
+        if start_utc <= observation.timestamp_utc < end_utc
+    ]
+
+
+def _parser_backed_forecast_fetch(
+    latitude: float,
+    longitude: float,
+    timezone: str,
+    forecast_hours: int | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+):
+    assert forecast_hours is None
+    assert start_date is not None
+    assert end_date is not None
+    station_timezone = ZoneInfo(timezone)
+    start_utc, end_utc = weather._local_date_range_to_utc_bounds(
+        start_date,
+        end_date,
+        station_timezone,
+    )
+    times = _open_meteo_utc_hour_strings_for_local_range(start_utc, end_utc)
+    forecasts = weather._parse_open_meteo_forecast_response(
+        _open_meteo_payload(times),
+        timezone,
+        provider_timezone_name=weather.OPEN_METEO_CANONICAL_TIMEZONE,
+    )
+    return [
+        forecast
+        for forecast in forecasts
+        if start_utc <= forecast.forecast_timestamp_utc < end_utc
+    ]
+
+
+def _open_meteo_utc_hour_strings_for_local_range(
+    start_utc: datetime,
+    end_utc: datetime,
+) -> list[str]:
+    request_start_date, request_end_date = weather._utc_request_dates_for_local_range(
+        start_utc,
+        end_utc,
+    )
+    current_utc = datetime.combine(
+        request_start_date,
+        datetime.min.time(),
+        tzinfo=timezone.utc,
+    )
+    request_end_utc = datetime.combine(
+        request_end_date + timedelta(days=1),
+        datetime.min.time(),
+        tzinfo=timezone.utc,
+    )
+    timestamps: list[str] = []
+    while current_utc < request_end_utc:
+        timestamps.append(current_utc.replace(tzinfo=None).isoformat(timespec="minutes"))
+        current_utc += timedelta(hours=1)
+    return timestamps
+
+
+def _open_meteo_payload(times: list[str]) -> dict[str, object]:
+    count = len(times)
+    return {
+        "hourly": {
+            "time": times,
+            "temperature_2m": [12.0] * count,
+            "cloud_cover": [35.0] * count,
+            "precipitation": [0.0] * count,
+            "rain": [0.0] * count,
+            "snowfall": [0.0] * count,
+            "weather_code": [1] * count,
+            "shortwave_radiation": [120.0] * count,
+            "direct_radiation": [90.0] * count,
+            "diffuse_radiation": [30.0] * count,
+        }
+    }

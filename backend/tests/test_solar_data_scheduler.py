@@ -606,14 +606,16 @@ def test_validate_complete_coverage_reports_row_count_mismatch() -> None:
         )
 
 
-def test_validate_local_wall_time_coverage_accepts_kyiv_dst_fall_back_utc_gap() -> None:
+def test_validate_local_wall_time_coverage_accepts_kyiv_dst_fall_back_repeated_hour() -> None:
     start_local = datetime(2025, 10, 26, 0, 0, tzinfo=STATION_TIMEZONE)
     end_local = datetime(2025, 10, 27, 0, 0, tzinfo=STATION_TIMEZONE)
-    rows = _local_wall_rows(start_local, end_local, minutes=60)
+    rows = _real_time_rows(start_local, end_local, minutes=60)
 
-    assert len(rows) == 24
+    assert len(rows) == 25
     assert rows[3].timestamp_utc.isoformat() == "2025-10-26T00:00:00+00:00"
-    assert rows[4].timestamp_utc.isoformat() == "2025-10-26T02:00:00+00:00"
+    assert rows[4].timestamp_utc.isoformat() == "2025-10-26T01:00:00+00:00"
+    assert rows[3].timestamp_local.isoformat() == "2025-10-26T03:00:00+03:00"
+    assert rows[4].timestamp_local.isoformat() == "2025-10-26T03:00:00+02:00"
 
     solar_data_scheduler._validate_complete_coverage(
         rows,
@@ -632,12 +634,12 @@ def test_validate_local_wall_time_coverage_accepts_kyiv_dst_fall_back_utc_gap() 
 def test_validate_local_wall_time_coverage_fails_on_missing_dst_day_local_hour() -> None:
     start_local = datetime(2025, 10, 26, 0, 0, tzinfo=STATION_TIMEZONE)
     end_local = datetime(2025, 10, 27, 0, 0, tzinfo=STATION_TIMEZONE)
-    rows = _local_wall_rows(start_local, end_local, minutes=60)
-    rows = rows[:4] + rows[5:] + [rows[-1]]
+    rows = _real_time_rows(start_local, end_local, minutes=60)
+    rows = rows[:4] + rows[5:]
 
     with pytest.raises(
         RuntimeError,
-        match="Historical weather data has a non-continuous local wall-clock",
+        match="Historical weather data row count mismatch",
     ):
         solar_data_scheduler._validate_complete_coverage(
             rows,
@@ -651,6 +653,30 @@ def test_validate_local_wall_time_coverage_fails_on_missing_dst_day_local_hour()
             label="Historical weather data",
             cadence_mode="local_wall_time",
         )
+
+
+def test_validate_local_wall_time_coverage_accepts_kyiv_dst_spring_forward() -> None:
+    start_local = datetime(2026, 3, 29, 0, 0, tzinfo=STATION_TIMEZONE)
+    end_local = datetime(2026, 3, 30, 0, 0, tzinfo=STATION_TIMEZONE)
+    rows = _real_time_rows(start_local, end_local, minutes=60)
+
+    assert len(rows) == 23
+    assert 3 not in {row.timestamp_local.hour for row in rows}
+    assert rows[0].timestamp_local.isoformat() == "2026-03-29T00:00:00+02:00"
+    assert rows[-1].timestamp_local.isoformat() == "2026-03-29T23:00:00+03:00"
+
+    solar_data_scheduler._validate_complete_coverage(
+        rows,
+        timestamp_attr="timestamp_utc",
+        local_timestamp_attr="timestamp_local",
+        start_utc=start_local.astimezone(timezone.utc),
+        end_utc=end_local.astimezone(timezone.utc),
+        start_local=start_local,
+        end_local=end_local,
+        timestep_minutes=60,
+        label="Historical weather data",
+        cadence_mode="local_wall_time",
+    )
 
 
 def test_scheduler_runs_full_pipeline_before_first_sleep() -> None:
@@ -1022,21 +1048,23 @@ def _save_simulated_rows(
     save_simulated_solar_points(session, rows)
 
 
-def _local_wall_rows(
+def _real_time_rows(
     start_local: datetime,
     end_local: datetime,
     minutes: int,
 ) -> list[SimpleNamespace]:
-    current = start_local
+    current_utc = start_local.astimezone(timezone.utc)
+    end_utc = end_local.astimezone(timezone.utc)
     rows: list[SimpleNamespace] = []
-    while current < end_local:
+    while current_utc < end_utc:
+        timestamp_local = current_utc.astimezone(STATION_TIMEZONE)
         rows.append(
             SimpleNamespace(
-                timestamp_utc=current.astimezone(timezone.utc),
-                timestamp_local=current,
+                timestamp_utc=current_utc,
+                timestamp_local=timestamp_local,
             )
         )
-        current += timedelta(minutes=minutes)
+        current_utc += timedelta(minutes=minutes)
     return rows
 
 

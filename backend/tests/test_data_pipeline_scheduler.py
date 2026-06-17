@@ -174,6 +174,55 @@ def test_scheduler_solar_cache_cycle_dry_run_does_not_call_runner(
     assert not lock_path.exists()
 
 
+def test_scheduler_does_not_refresh_solar_cache_before_successful_pipeline(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class StopLoop(RuntimeError):
+        pass
+
+    class StopAfterWait:
+        def __init__(self) -> None:
+            self.waits: list[float] = []
+
+        def is_set(self) -> bool:
+            return False
+
+        def wait(self, seconds: float) -> bool:
+            self.waits.append(seconds)
+            raise StopLoop
+
+    stop_event = StopAfterWait()
+    lock_path = tmp_path / "pipeline.lock"
+    settings = run_data_pipeline_scheduler.parse_args(
+        [
+            "--interval-minutes",
+            "60",
+            "--solar-cache-interval-minutes",
+            "1",
+            "--lock-path",
+            str(lock_path),
+        ]
+    )
+
+    def fail_pipeline(**kwargs: object) -> object:
+        raise RuntimeError("source maintenance failed")
+
+    def fail_cache(settings: object) -> bool:
+        raise AssertionError("solar cache must not run before source pipeline succeeds")
+
+    monkeypatch.setattr(run_data_pipeline_scheduler, "run_solar_cache_cycle", fail_cache)
+
+    with pytest.raises(StopLoop):
+        run_data_pipeline_scheduler.run_scheduler(
+            settings,
+            pipeline_runner=fail_pipeline,
+            stop_event=stop_event,
+        )
+
+    assert stop_event.waits
+
+
 def test_compose_uses_data_scheduler_not_weather_scheduler() -> None:
     compose_path = Path(__file__).resolve().parents[2] / "docker-compose.yml"
     text = compose_path.read_text(encoding="utf-8")

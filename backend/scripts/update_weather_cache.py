@@ -499,6 +499,23 @@ def _validate_hourly_window(
     }
     if len(unique_timestamps) != len(sorted_timestamps):
         raise RuntimeError(f"{label} fetch returned duplicate hourly timestamps")
+    sorted_utc_timestamps = sorted(unique_timestamps)
+    for index, actual_timestamp in enumerate(sorted_utc_timestamps):
+        expected_timestamp = start_utc + timedelta(hours=index)
+        if actual_timestamp != expected_timestamp:
+            previous_timestamp = (
+                sorted_utc_timestamps[index - 1] if index > 0 else None
+            )
+            previous_text = (
+                "none"
+                if previous_timestamp is None
+                else previous_timestamp.isoformat()
+            )
+            raise RuntimeError(
+                f"{label} fetch has a non-continuous hourly UTC timestep "
+                f"at index {index}: expected {expected_timestamp.isoformat()}, "
+                f"found {actual_timestamp.isoformat()}, previous {previous_text}"
+            )
 
     expected_dates = set(_iter_dates(start_date, end_date))
     actual_dates = {timestamp.date() for timestamp in sorted_timestamps}

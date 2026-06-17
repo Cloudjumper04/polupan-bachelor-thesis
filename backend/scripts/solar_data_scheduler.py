@@ -1343,11 +1343,9 @@ def _local_wall_time_coverage_validation_error(
 ) -> str | None:
     _require_timezone_aware(start_local)
     _require_timezone_aware(end_local)
-    expected_count = _expected_wall_time_row_count(
-        start_local,
-        end_local,
-        timestep_minutes,
-    )
+    start_utc = _as_utc(start_local)
+    end_utc = _as_utc(end_local)
+    expected_count = _expected_row_count(start_utc, end_utc, timestep_minutes)
     start_wall = _wall_time(start_local)
     end_wall = _wall_time(end_local)
     if not rows:
@@ -1363,7 +1361,7 @@ def _local_wall_time_coverage_validation_error(
 
     timestamps = sorted(
         (_row_timestamp_local(row, local_timestamp_attr) for row in rows),
-        key=_local_wall_sort_key,
+        key=lambda value: value.astimezone(timezone.utc),
     )
     first_wall = _wall_time(timestamps[0])
     if first_wall != start_wall:
@@ -1383,20 +1381,20 @@ def _local_wall_time_coverage_validation_error(
         )
 
     for index, actual_timestamp in enumerate(timestamps):
-        expected_wall = start_wall + step * index
-        actual_wall = _wall_time(actual_timestamp)
-        if actual_wall != expected_wall:
+        expected_timestamp = start_utc + step * index
+        actual_utc = actual_timestamp.astimezone(timezone.utc)
+        if actual_utc != expected_timestamp:
             previous_timestamp = timestamps[index - 1] if index > 0 else None
             previous_text = (
                 "none"
                 if previous_timestamp is None
-                else _wall_time(previous_timestamp).isoformat()
+                else previous_timestamp.astimezone(timezone.utc).isoformat()
             )
             return (
-                f"{label} has a non-continuous local wall-clock "
+                f"{label} has a non-continuous real-time "
                 f"{timestep_minutes}-minute timestep at index {index}: "
-                f"expected {expected_wall.isoformat()}, "
-                f"found {actual_wall.isoformat()}, previous {previous_text}"
+                f"expected {expected_timestamp.isoformat()}, "
+                f"found {actual_utc.isoformat()}, previous {previous_text}"
             )
     return None
 
@@ -1425,27 +1423,12 @@ def _wall_time(value: datetime) -> datetime:
     return value.replace(tzinfo=None)
 
 
-def _local_wall_sort_key(value: datetime) -> tuple[datetime, float]:
-    offset = value.utcoffset()
-    offset_seconds = 0.0 if offset is None else offset.total_seconds()
-    return _wall_time(value), -offset_seconds
-
-
 def _expected_row_count(
     start_utc: datetime,
     end_utc: datetime,
     timestep_minutes: int,
 ) -> int:
     total_seconds = (end_utc - start_utc).total_seconds()
-    return int(total_seconds // (timestep_minutes * 60))
-
-
-def _expected_wall_time_row_count(
-    start_local: datetime,
-    end_local: datetime,
-    timestep_minutes: int,
-) -> int:
-    total_seconds = (_wall_time(end_local) - _wall_time(start_local)).total_seconds()
     return int(total_seconds // (timestep_minutes * 60))
 
 
