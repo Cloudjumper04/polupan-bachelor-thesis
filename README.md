@@ -1,265 +1,461 @@
-﻿# SmartEnergy Lab - Battery Charging Automation Module
+# SmartEnergy Lab
 
-Bachelor thesis software project for a simulation-based SmartEnergy Lab stand with solar generation, battery/load/grid simulation, EMS logic, API access, and a React dashboard.
+## Опис програми
 
-Official topic:
+SmartEnergy Lab — це вебзастосунок для моделювання та візуалізації роботи лабораторного енергетичного стенду з сонячною генерацією, акумуляторною батареєю, навантаженням, централізованою електромережею та системою керування енергетичними потоками.
 
-**Software module for automation of battery charging modes of SmartEnergy Lab with solar generation.**
+Система моделює роботу стенду SmartEnergy Lab та відображає:
 
-## Prerequisites
+- генерацію електроенергії сонячними панелями;
+- стан централізованої електромережі;
+- графіки доступності електроенергії;
+- споживання електроенергії лабораторним навантаженням;
+- стан акумуляторної батареї;
+- рішення EMS щодо розподілу енергії;
+- взаємодію між сонячною генерацією, мережею, батареєю та навантаженням.
 
-Required:
+Інтерфейс реалізований у вигляді адаптивного вебзастосунку. Backend автоматично створює локальну базу даних, виконує початкове заповнення даних та надає REST API для frontend-частини.
 
-- Git
-- Docker Desktop with Docker Compose
+---
 
-Optional:
+# Основні можливості
 
-- Python virtual environment for local backend commands and tests
-- Node.js/npm only if you want to run or build the frontend outside Docker
+- Моделювання сонячної генерації для лабораторного стенду;
+- Моделювання доступності централізованої електромережі;
+- Моделювання навантаження лабораторії;
+- Моделювання стану акумуляторної батареї;
+- Робота EMS для автоматичного вибору режиму енергоживлення;
+- Відображення поточних параметрів системи;
+- Відображення історичних графіків;
+- Автоматичне початкове заповнення бази даних при першому запуску;
+- REST API для отримання даних системи;
+- Web UI для перегляду стану стенду;
+- Запуск усієї системи однією командою через Docker Compose.
 
-The project is designed to run through Docker Compose. Local Python and Node are useful for development, but they are not required for the normal demo run.
+---
 
-## Clone And Enter Project
+# Технології
+
+## Frontend
+
+- React
+- Vite
+- TypeScript
+- CSS
+- REST API integration
+
+## Backend API
+
+- Python
+- FastAPI
+- Uvicorn
+- Pydantic
+- SQLModel
+- SQLite
+- PyYAML
+
+## Симуляція та обробка даних
+
+- pandas
+- numpy
+- custom simulation modules
+- Open-Meteo weather data
+- rule-based EMS logic
+
+## Інфраструктура
+
+- Docker
+- Docker Compose
+
+---
+
+# Конфігураційний файл
+
+Для налаштування параметрів моделювання використовується конфігураційний YAML-файл.
+
+Розташування файлу:
+
+```text
+backend/config/config.yaml
+```
+
+У цьому файлі зберігаються основні параметри роботи системи, які використовуються під час генерації даних, моделювання роботи стенду та прийняття рішень EMS.
+
+Типові групи параметрів:
+
+### Solar
+
+Параметри сонячної генерації:
+
+- встановлена потужність сонячних панелей;
+- коефіцієнти ефективності;
+- параметри прогнозування генерації;
+- географічні координати для отримання погодних даних.
+
+### Battery
+
+Параметри акумуляторної батареї:
+
+- ємність батареї;
+- максимальна потужність заряджання;
+- максимальна потужність розряджання;
+- мінімальний та максимальний рівень заряду (SOC);
+- початковий рівень заряду.
+
+### Load
+
+Параметри навантаження:
+
+- базове споживання;
+- профілі навантаження;
+- коефіцієнти випадкових змін споживання.
+
+### Grid
+
+Параметри електромережі:
+
+- графік доступності мережі;
+- правила генерації аварійних відключень;
+- характеристики мережевого живлення.
+
+### EMS
+
+Параметри системи керування енергопотоками:
+
+- пріоритети використання джерел енергії;
+- правила заряджання батареї;
+- правила розряджання батареї;
+- умови перемикання між мережею та акумулятором.
+
+### Simulation
+
+Загальні параметри симуляції:
+
+- часовий крок моделювання;
+- період історичних даних;
+- період прогнозування;
+- параметри автоматичного оновлення даних.
+
+Після зміни конфігураційного файлу рекомендується перезапустити контейнери:
 
 ```bash
-git clone <repository-url>
-cd ProjectFolder
+docker compose down
+docker compose up --build
 ```
 
-On Windows, run commands from the repository root, for example:
+---
 
-```powershell
-cd Q:\KPI\Дипломка\ProjectFolder
+# Необхідне програмне забезпечення
+
+Перед запуском необхідно встановити:
+
+- Git
+- Docker Desktop
+- Docker Compose
+
+Рекомендована ОС:
+
+- Windows 10/11
+- Linux
+- macOS
+
+Для стандартного запуску вручну встановлювати Python, Node.js або npm не потрібно, оскільки backend і frontend запускаються всередині Docker-контейнерів.
+
+---
+
+# Встановлення проєкту
+
+## 1. Клонування репозиторію
+
+```bash
+git clone https://github.com/2026-TV-22/Polupan_MV.git
 ```
 
-## Configuration
+## 2. Перехід до директорії проєкту
 
-Station configuration lives in:
-
-```text
-backend/config/station.default.yaml
+```bash
+cd Polupan_MV
 ```
 
-Default backend and scheduler config path:
+## 3. Запуск програми
 
-```text
-backend/config/station.default.yaml
+```bash
+docker compose up --build
 ```
 
-Runtime database path:
+Після виконання цієї команди Docker Compose збирає та запускає всі необхідні сервіси:
 
-```text
-backend/data/smartenergy.db
-```
+- backend API;
+- frontend-застосунок;
+- data scheduler для автоматичного заповнення бази даних.
 
-Relevant environment variables:
+---
 
-- `SMARTENERGY_CONFIG_PATH`: optional backend API config path override. Default: `backend/config/station.default.yaml`.
-- `SMARTENERGY_DATABASE_URL`: optional backend API database URL override. Default: `sqlite:///backend/data/smartenergy.db`.
-- `VITE_API_PROXY_TARGET`: frontend Docker proxy target. In Docker Compose it is set to `http://backend-api:6001` so the frontend container does not call the backend through `localhost`.
+# Запуск у фоновому режимі
 
-The scheduler scripts also support command-line overrides such as `--config`, `--database-url`, and `--db-path`.
-
-## Run With Docker Compose
-
-Build and start all services:
+Якщо потрібно, щоб контейнери працювали у фоновому режимі без відкритого термінала, використовуйте параметр `-d` (detached mode):
 
 ```bash
 docker compose up -d --build
 ```
 
-Service names:
+Після запуску термінал буде вільний, а всі сервіси продовжать працювати у фоновому режимі.
 
-- `backend-api`
-- `frontend`
-- `data-scheduler`
-
-Container names:
-
-- `smartenergy-backend-api`
-- `smartenergy-frontend`
-- `smartenergy-data-scheduler`
-
-Local URLs:
-
-- Frontend: `http://localhost:5173`
-- Backend API: `http://localhost:6001`
-
-Useful Docker commands:
+Перевірити список запущених контейнерів:
 
 ```bash
-docker compose ps
-docker compose logs -f backend-api
-docker compose logs -f frontend
-docker compose logs -f data-scheduler
+docker ps
+```
+
+Переглянути журнали роботи контейнерів:
+
+```bash
+docker compose logs -f
+```
+
+Зупинити контейнери:
+
+```bash
 docker compose down
 ```
 
-## Data Scheduler
+---
 
-The `data-scheduler` service maintains the demo data in `backend/data/smartenergy.db`.
+# Автоматичний запуск після перезавантаження ПК
 
-It updates and maintains:
+Для автоматичного запуску контейнерів після перезавантаження комп'ютера необхідно:
 
-- weather cache
-- solar source data and interpolated solar cache
-- grid availability
-- load simulation data
-- battery simulation data
-- EMS dashboard data
+1. Переконатися, що Docker Desktop запускається автоматично разом із системою.
+2. Для кожного сервісу в файлі `docker-compose.yml` додати політику перезапуску:
 
-The scheduler runs automatically with Docker Compose. The current Compose configuration starts it with a 360-minute main pipeline interval, plus its internal fast solar-cache refresh cycle.
+```yaml
+restart: unless-stopped
+```
 
-Fallback source values are disabled by default. Use `--allow-fallbacks` only for deliberate demo/test runs where synthetic fallback source values are acceptable.
+Приклад:
 
-Large full-history rebuilds should not be treated as routine scheduler writes to the active runtime database. Use the swap-DB workflow described below: build data into a separate DB file, verify it, back up the current runtime DB, stop services that use the DB, then swap files only after validation.
+```yaml
+services:
+  backend:
+    restart: unless-stopped
 
-## Manual One-Shot Update
+  frontend:
+    restart: unless-stopped
 
-These commands use the Docker scheduler image and mounted `backend/data` directory.
+  scheduler:
+    restart: unless-stopped
+```
 
-Dry-run, no writes:
+Після внесення змін перезапустити контейнери:
 
 ```bash
-docker compose run --rm --no-deps data-scheduler python backend/scripts/update_data_pipeline.py --dry-run
+docker compose down
+docker compose up -d --build
 ```
 
-Real one-shot update, writes to the default runtime DB:
+Після цього:
 
-```bash
-docker compose run --rm --no-deps data-scheduler python backend/scripts/update_data_pipeline.py
-```
+- контейнери автоматично запускатимуться після старту Docker;
+- після перезавантаження ПК сервіси відновлять роботу автоматично;
+- контейнери працюватимуть у фоновому режимі без участі користувача.
 
-Optional custom DB path:
+Для Windows важливо, щоб Docker Desktop був налаштований на автоматичний запуск під час входу в систему.
 
-```bash
-docker compose run --rm --no-deps data-scheduler python backend/scripts/update_data_pipeline.py --db-path backend/data/smartenergy_rebuild.db
-```
+---
 
-Optional local Windows venv equivalents:
+# Перший запуск
 
-```powershell
-.\.venv\Scripts\python.exe backend\scripts\update_data_pipeline.py --dry-run
-.\.venv\Scripts\python.exe backend\scripts\update_data_pipeline.py
-.\.venv\Scripts\python.exe backend\scripts\update_data_pipeline.py --db-path backend\data\smartenergy_rebuild.db
-```
+Під час першого запуску з порожньою локальною базою даних система автоматично виконує початкове заповнення даних.
 
-Before any command that intentionally mutates `backend/data/smartenergy.db`, create a backup.
+У процесі першої ініціалізації генеруються:
 
-## Backup And DB Safety
+- історичні дані сонячної генерації;
+- прогнозні дані сонячної генерації;
+- дані доступності електромережі;
+- історичні та поточні дані навантаження;
+- історичні та поточні дані акумуляторної батареї;
+- історичні та поточні рішення EMS.
 
-Runtime DB:
+Перше заповнення бази даних може тривати кілька хвилин. Це нормальна поведінка. Не потрібно зупиняти контейнери під час цього процесу.
+
+Після завершення початкового заповнення dashboard стає повністю доступним.
+
+---
+
+# Адреси сервісів
+
+## Frontend
 
 ```text
-backend/data/smartenergy.db
+http://localhost:5173
 ```
 
-Backup script:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\backend\scripts\backup_runtime_db.ps1
-```
-
-Use the backup script before:
-
-- manual real one-shot updates against the runtime DB
-- schema-changing work
-- full-history rebuilds
-- any operation where failed writes could affect the demo database
-
-Backups are written under:
+## Backend API
 
 ```text
-backend/data/backups
+http://localhost:6001
 ```
 
-Short swap-DB workflow for large rebuilds:
-
-1. Create a backup of `backend/data/smartenergy.db`.
-2. Generate or rebuild into a separate DB, for example `backend/data/smartenergy_rebuild.db` using `--db-path`.
-3. Verify the rebuilt DB with focused API or script checks.
-4. Stop services that read/write the runtime DB.
-5. Rename/swap the DB files only after validation.
-6. Restart services and check the dashboard/API.
-
-Do not repair a damaged runtime DB in place if a backup is available.
-
-## Useful API Checks
-
-With Docker Compose running, open these URLs in a browser or call them with `curl`:
+## Swagger / API documentation
 
 ```text
-http://localhost:6001/api/system/dashboard
-http://localhost:6001/api/dashboard/range
-http://localhost:6001/api/solar/dashboard
-http://localhost:6001/api/grid/current
+http://localhost:6001/docs
 ```
 
-Example:
+---
+
+# Основні API endpoints
+
+## Загальний діапазон доступних даних
+
+```text
+GET /api/dashboard/range
+```
+
+## Загальний стан системи
+
+```text
+GET /api/system/dashboard
+```
+
+## Сонячна генерація
+
+```text
+GET /api/solar/dashboard
+```
+
+## Стан електромережі
+
+```text
+GET /api/grid/current
+```
+
+---
+
+# Структура роботи системи
+
+Після запуску система працює за таким принципом:
+
+```text
+Docker Compose
+→ backend API
+→ frontend UI
+→ data scheduler
+→ SQLite database
+→ simulation modules
+→ REST API
+→ dashboard
+```
+
+Data scheduler автоматично створює та оновлює дані для всіх основних модулів системи.
+
+Після першого повного заповнення база даних зберігається локально у директорії:
+
+```text
+backend/data/
+```
+
+Файл бази даних не входить до репозиторію та створюється автоматично під час запуску.
+
+---
+
+# Зупинка програми
+
+Для зупинки програми у вікні термінала, де запущено Docker Compose, натиснути:
+
+```text
+Ctrl + C
+```
+
+Після цього можна виконати:
 
 ```bash
-curl http://localhost:6001/api/system/dashboard
+docker compose down
 ```
 
-## Tests And Builds
+Якщо контейнери були запущені у фоновому режимі:
 
-Backend tests from the project virtual environment on Windows:
+```bash
+docker compose down
+```
+
+---
+
+# Повторний запуск
+
+Після першої ініціалізації повторний запуск зазвичай виконується швидше, оскільки локальна база даних уже створена.
+
+Запуск у звичайному режимі:
+
+```bash
+docker compose up
+```
+
+Запуск у фоновому режимі:
+
+```bash
+docker compose up -d
+```
+
+Якщо потрібно повністю перебудувати контейнери:
+
+```bash
+docker compose up --build
+```
+
+Або у фоновому режимі:
+
+```bash
+docker compose up -d --build
+```
+
+---
+
+# Повне очищення локальних даних
+
+Якщо потрібно перевірити запуск системи з нуля, можна видалити локальну базу даних.
+
+Перед цим рекомендується зупинити контейнери:
+
+```bash
+docker compose down
+```
+
+Після цього можна видалити файли бази даних у директорії:
+
+```text
+backend/data/
+```
+
+На Windows PowerShell:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest backend\tests
+Remove-Item ".\\backend\\data\\smartenergy.db*" -Force -ErrorAction SilentlyContinue
+Remove-Item ".\\backend\\data\\pipeline.lock" -Force -ErrorAction SilentlyContinue
 ```
 
-Frontend production build through Docker Node, useful when local npm is unavailable:
-
-```powershell
-docker run --rm -v "${PWD}\frontend:/app" -w /app node:22-alpine npm run build
-```
-
-If local Node/npm is installed, the frontend can also be built from `frontend/`:
+Після цього наступний запуск знову виконає повне початкове заповнення:
 
 ```bash
-cd frontend
-npm install
-npm run build
+docker compose up --build
 ```
 
-## Troubleshooting
+---
 
-Stale frontend or backend containers:
+# Призначення проєкту
 
-```bash
-docker compose up -d --build backend-api frontend data-scheduler
+Проєкт розроблено в межах бакалаврської дипломної роботи на тему:
+
+```text
+Програмний модуль автоматизації режимів зарядки акумуляторних батарей лабораторного стенду з сонячною генерацією енергії
 ```
 
-Scheduler diagnostics:
+Мета програмного модуля — забезпечити моделювання роботи лабораторного стенду SmartEnergy Lab та автоматизацію режимів розподілу енергії між сонячною генерацією, централізованою електромережею, акумуляторною батареєю та навантаженням.
 
-```bash
-docker compose logs -f data-scheduler
-```
+---
 
-`database disk image is malformed`:
+# Автор
 
-- Stop services that use the DB.
-- Restore the latest good backup from `backend/data/backups`.
-- Do not attempt to repair the active runtime DB in place.
+Полупан Михайло Валерійович
 
-Backend API is unavailable:
-
-```bash
-docker compose ps
-docker compose logs -f backend-api
-```
-
-Frontend cannot reach backend in Docker:
-
-- Confirm the `frontend` service has `VITE_API_PROXY_TARGET=http://backend-api:6001`.
-- Do not configure the frontend container to call `localhost` for the backend.
-
-## Notes For Development
-
-- Backend code lives under `backend/app/`.
-- Backend scripts live under `backend/scripts/`.
-- Frontend code lives under `frontend/`.
-- UI references live under `docs/ui/`.
-- Runtime data lives under `backend/data/` and should not be deleted as cleanup.
+Група: ТВ-22
