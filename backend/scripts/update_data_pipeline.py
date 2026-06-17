@@ -22,11 +22,18 @@ import generate_grid_availability
 import generate_system_simulation
 import solar_data_scheduler
 
-from app.config_loader import calculate_config_hash, load_config
+from app.config_loader import (
+    calculate_config_hash,
+    calculate_system_config_hash,
+    load_config,
+)
 from app.schemas import AppConfig
+from app.storage.battery_repository import get_battery_history_range
 from app.storage.database import create_db_and_tables, get_engine
+from app.storage.ems_repository import get_ems_history_range
 from app.storage.forecast_solar_repository import list_forecast_solar_for_config
 from app.storage.grid_repository import find_missing_grid_availability_timestamps
+from app.storage.load_repository import get_load_history_range
 from app.storage.simulated_solar_repository import list_simulated_solar_for_config
 
 
@@ -99,6 +106,18 @@ class DataPipelineSummary:
     source_maintenance: SourceMaintenanceSummary | None = None
     source_coverage: SourceCoverageSummary | None = None
     system_generation: generate_system_simulation.SystemGenerationSummary | None = None
+
+
+@dataclass(frozen=True)
+class SystemHistoryBootstrapStatus:
+    required: bool
+    reason: str
+    station_id: str
+    config_hash: str
+    expected_history_start_utc: datetime
+    load_history_range: tuple[datetime | None, datetime | None]
+    battery_history_range: tuple[datetime | None, datetime | None]
+    ems_history_range: tuple[datetime | None, datetime | None]
 
 
 def main() -> None:
@@ -279,6 +298,87 @@ def run_data_pipeline(
         source_maintenance=source_summary,
         source_coverage=source_coverage,
         system_generation=system_summary,
+    )
+
+
+def inspect_system_history_bootstrap_status(
+    *,
+    config_path: Path,
+    database_url: str | None,
+    history_start: date | None = None,
+) -> SystemHistoryBootstrapStatus:
+    config = load_config(config_path)
+    resolved_history_start = history_start or date.fromisoformat(
+        config.station.installation_date,
+    )
+    station_timezone = ZoneInfo(config.station.solar.installation.timezone)
+    expected_start_utc = datetime.combine(
+        resolved_history_start,
+        datetime_time.min,
+        tzinfo=station_timezone,
+    ).astimezone(timezone.utc)
+    station_id = config.station.id
+    config_hash = calculate_system_config_hash(config)
+
+    import_all_storage_models()
+    engine = get_engine(database_url)
+    create_db_and_tables(engine)
+    with Session(engine) as session:
+        load_range = get_load_history_range(session, station_id, config_hash)
+        battery_range = get_battery_history_range(session, station_id, config_hash)
+        ems_range = get_ems_history_range(session, station_id, config_hash)
+
+    ranges = {
+        "load": load_range,
+        "battery": battery_range,
+        "ems": ems_range,
+    }
+    missing = [
+        name
+        for name, (start_utc, end_utc) in ranges.items()
+        if start_utc is None or end_utc is None
+    ]
+    if missing:
+        return SystemHistoryBootstrapStatus(
+            required=True,
+            reason=f"missing system history tables: {','.join(missing)}",
+            station_id=station_id,
+            config_hash=config_hash,
+            expected_history_start_utc=expected_start_utc,
+            load_history_range=load_range,
+            battery_history_range=battery_range,
+            ems_history_range=ems_range,
+        )
+
+    late_starts = [
+        name
+        for name, (start_utc, _) in ranges.items()
+        if start_utc is not None and start_utc > expected_start_utc
+    ]
+    if late_starts:
+        return SystemHistoryBootstrapStatus(
+            required=True,
+            reason=(
+                "system history starts after required history start for "
+                f"{','.join(late_starts)}"
+            ),
+            station_id=station_id,
+            config_hash=config_hash,
+            expected_history_start_utc=expected_start_utc,
+            load_history_range=load_range,
+            battery_history_range=battery_range,
+            ems_history_range=ems_range,
+        )
+
+    return SystemHistoryBootstrapStatus(
+        required=False,
+        reason="system history baseline is present",
+        station_id=station_id,
+        config_hash=config_hash,
+        expected_history_start_utc=expected_start_utc,
+        load_history_range=load_range,
+        battery_history_range=battery_range,
+        ems_history_range=ems_range,
     )
 
 

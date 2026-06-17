@@ -14,10 +14,13 @@ from app.api.system_dashboard import get_dashboard_range, get_system_dashboard
 from app.config_loader import calculate_system_config_hash, load_config
 from app.simulation import weather
 from app.simulation.engine import SystemSimulationPersistSummary
-from app.storage.battery_repository import list_battery_cache_points
+from app.storage.battery_repository import (
+    list_battery_cache_points,
+    list_battery_history_points,
+)
 from app.storage.database import get_engine
-from app.storage.ems_repository import list_ems_cache_points
-from app.storage.load_repository import list_load_cache_points
+from app.storage.ems_repository import list_ems_cache_points, list_ems_history_points
+from app.storage.load_repository import list_load_cache_points, list_load_history_points
 
 
 SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
@@ -25,6 +28,7 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 import update_data_pipeline
+import run_data_pipeline_scheduler
 
 
 CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "station.default.yaml"
@@ -380,7 +384,7 @@ def test_repeated_pipeline_run_replaces_system_cache_without_duplicates(
     )
 
 
-def test_startup_backfill_uses_utc_weather_and_populates_dashboard(
+def test_scheduler_bootstrap_uses_utc_weather_and_populates_dashboard_history(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -404,27 +408,56 @@ def test_startup_backfill_uses_utc_weather_and_populates_dashboard(
         "fetch_open_meteo_forecast",
         _parser_backed_forecast_fetch,
     )
-
-    summary = update_data_pipeline.run_data_pipeline(
-        config_path=CONFIG_PATH,
-        database_url=db_url,
-        history_start=history_start,
-        source_days_ahead=2,
-        grid_days_ahead=7,
-        allow_fallbacks=False,
-        now=startup_now,
+    monkeypatch.setattr(
+        run_data_pipeline_scheduler.update_data_pipeline,
+        "print_data_pipeline_summary",
+        lambda summary: None,
     )
 
+    settings = run_data_pipeline_scheduler.parse_args(
+        [
+            "--config",
+            str(CONFIG_PATH),
+            "--db-path",
+            str(db_path),
+            "--history-start",
+            history_start.isoformat(),
+            "--source-days-ahead",
+            "2",
+            "--grid-days-ahead",
+            "7",
+            "--lock-path",
+            str(tmp_path / "pipeline.lock"),
+        ]
+    )
+    summaries: list[update_data_pipeline.DataPipelineSummary] = []
+
+    def run_with_fixed_now(**kwargs: object) -> update_data_pipeline.DataPipelineSummary:
+        summary = update_data_pipeline.run_data_pipeline(**kwargs, now=startup_now)
+        summaries.append(summary)
+        return summary
+
+    assert run_data_pipeline_scheduler.run_pipeline_cycle(
+        settings,
+        pipeline_runner=run_with_fixed_now,
+    )
+    summary = summaries[0]
+
+    assert summary.full_history is True
     assert summary.source_maintenance is not None
     assert summary.source_maintenance.weather_cache.historical_rows_inserted == 167
     assert summary.source_maintenance.weather_cache.forecast_rows_inserted == 72
     assert summary.source_coverage is not None
     assert summary.source_coverage.grid_missing_points == 0
     assert summary.system_generation is not None
+    assert summary.system_generation.history_writes_enabled is True
     assert summary.system_generation.solar_fallback_minutes == 0
     assert summary.system_generation.grid_fallback_minutes == 0
     assert summary.system_generation.weather_fallback_minutes == 0
     assert summary.system_generation.persisted is not None
+    assert summary.system_generation.persisted.load_history_rows > 0
+    assert summary.system_generation.persisted.battery_history_rows > 0
+    assert summary.system_generation.persisted.ems_history_rows > 0
     assert summary.system_generation.persisted.load_cache_rows > 0
     assert summary.system_generation.persisted.battery_cache_rows > 0
     assert summary.system_generation.persisted.ems_cache_rows > 0
@@ -433,8 +466,11 @@ def test_startup_backfill_uses_utc_weather_and_populates_dashboard(
     config_hash = calculate_system_config_hash(config)
     engine = get_engine(db_url)
     with Session(engine) as session:
+        assert list_load_history_points(session, config.station.id, config_hash)
         assert list_load_cache_points(session, config.station.id, config_hash)
+        assert list_battery_history_points(session, config.station.id, config_hash)
         assert list_battery_cache_points(session, config.station.id, config_hash)
+        assert list_ems_history_points(session, config.station.id, config_hash)
         assert list_ems_cache_points(session, config.station.id, config_hash)
 
     monkeypatch.setenv("SMARTENERGY_DATABASE_URL", db_url)

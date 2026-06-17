@@ -269,17 +269,45 @@ def run_pipeline_cycle(
     )
     try:
         with PipelineFileLock(settings.lock_path):
+            full_history = settings.full_history
+            auto_bootstrap = False
+            if not settings.dry_run and not settings.full_history:
+                bootstrap_status = (
+                    update_data_pipeline.inspect_system_history_bootstrap_status(
+                        config_path=settings.config,
+                        database_url=settings.database_url,
+                        history_start=settings.history_start,
+                    )
+                )
+                if bootstrap_status.required:
+                    auto_bootstrap = True
+                    full_history = True
+                    _log(
+                        "first-run full bootstrap detected; forcing full_history=True "
+                        f"reason={bootstrap_status.reason} "
+                        f"station_id={bootstrap_status.station_id} "
+                        f"expected_history_start_utc="
+                        f"{bootstrap_status.expected_history_start_utc.isoformat()} "
+                        f"load_history_range="
+                        f"{_format_range(bootstrap_status.load_history_range)} "
+                        f"battery_history_range="
+                        f"{_format_range(bootstrap_status.battery_history_range)} "
+                        f"ems_history_range="
+                        f"{_format_range(bootstrap_status.ems_history_range)}"
+                    )
             summary = runner(
                 config_path=settings.config,
                 database_url=settings.database_url,
                 history_start=settings.history_start,
                 source_days_ahead=settings.source_days_ahead,
                 grid_days_ahead=settings.grid_days_ahead,
-                full_history=settings.full_history,
+                full_history=full_history,
                 allow_fallbacks=settings.allow_fallbacks,
                 dry_run=settings.dry_run,
             )
             update_data_pipeline.print_data_pipeline_summary(summary)
+            if auto_bootstrap:
+                _log("first-run full bootstrap executed successfully")
     except PipelineLockHeld as exc:
         _log_error(f"data pipeline cycle skipped: {exc}")
         return False
@@ -381,6 +409,11 @@ def _utc_timestamp() -> str:
 
 def _optional_iso(value: object) -> str:
     return value.isoformat() if hasattr(value, "isoformat") else "none"
+
+
+def _format_range(value: tuple[object | None, object | None]) -> str:
+    start, end = value
+    return f"{_optional_iso(start)}..{_optional_iso(end)}"
 
 
 if __name__ == "__main__":
